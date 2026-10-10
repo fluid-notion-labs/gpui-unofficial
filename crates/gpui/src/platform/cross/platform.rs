@@ -472,7 +472,7 @@ impl winit::application::ApplicationHandler<CrossEvent> for AppState {
 
     fn device_event(
         &mut self,
-        _event_loop: &ActiveEventLoop,
+        event_loop: &ActiveEventLoop,
         _device_id: winit::event::DeviceId,
         event: winit::event::DeviceEvent,
     ) {
@@ -499,6 +499,11 @@ impl winit::application::ApplicationHandler<CrossEvent> for AppState {
                             // release notifications are not delivered reliably. In an ideal fix,
                             // we would avoid synthesizing MouseUp from raw device events and instead
                             // make the normal winit event path complete correctly.
+                            //
+                            // IMPORTANT: set_active_context must be called here so that any
+                            // cx.open_window() calls triggered by the click handler have a valid
+                            // event loop reference (without it they silently fail).
+                            self.set_active_context(event_loop);
                             if let Some(window_id) = self.hovered_window_id.get() {
                                 if let Some(window) = self.windows.get(&window_id) {
                                     let position = window.0.state.mouse_position.get();
@@ -517,6 +522,7 @@ impl winit::application::ApplicationHandler<CrossEvent> for AppState {
                                     );
                                 }
                             }
+                            self.clear_active_context();
                         }
                     }
                 }
