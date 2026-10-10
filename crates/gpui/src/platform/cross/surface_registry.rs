@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{ AtomicU64, Ordering };
 use std::sync::Mutex;
 
 /// An opaque identifier for a registered WGPU surface.
@@ -41,7 +41,7 @@ impl SurfaceRegistry {
         device: &wgpu::Device,
         width: u32,
         height: u32,
-        format: wgpu::TextureFormat,
+        format: wgpu::TextureFormat
     ) -> SurfaceId {
         let id = SurfaceId(self.next_id.fetch_add(1, Ordering::Relaxed));
         let db = Self::create_double_buffer(device, width, height, format);
@@ -57,13 +57,7 @@ impl SurfaceRegistry {
     }
 
     /// Resize both buffers, creating new textures.
-    pub fn resize(
-        &self,
-        device: &wgpu::Device,
-        id: SurfaceId,
-        width: u32,
-        height: u32,
-    ) {
+    pub fn resize(&self, device: &wgpu::Device, id: SurfaceId, width: u32, height: u32) {
         let mut surfaces = self.surfaces.lock().unwrap();
         if let Some(db) = surfaces.get_mut(&id) {
             if db.width == width && db.height == height {
@@ -103,7 +97,7 @@ impl SurfaceRegistry {
     /// resources (e.g. a depth buffer) that must exactly match the view's size.
     pub fn lock_and_get_back_with_size(
         &self,
-        id: SurfaceId,
+        id: SurfaceId
     ) -> Option<(wgpu::TextureView, (u32, u32))> {
         let surfaces = self.surfaces.lock().unwrap();
         surfaces.get(&id).map(|db| {
@@ -121,9 +115,7 @@ impl SurfaceRegistry {
     /// Access the view at the given index (0 or 1).
     pub fn view_at(&self, id: SurfaceId, idx: usize) -> Option<wgpu::TextureView> {
         let surfaces = self.surfaces.lock().unwrap();
-        surfaces
-            .get(&id)
-            .and_then(|db| db.views.get(idx).cloned())
+        surfaces.get(&id).and_then(|db| db.views.get(idx).cloned())
     }
 
     /// Get the current size of a surface.
@@ -177,27 +169,29 @@ impl SurfaceRegistry {
         device: &wgpu::Device,
         width: u32,
         height: u32,
-        format: wgpu::TextureFormat,
+        format: wgpu::TextureFormat
     ) -> DoubleBuffer {
         let w = width.max(1);
         let h = height.max(1);
 
         let create_texture = |label: &str| {
-            device.create_texture(&wgpu::TextureDescriptor {
-                label: Some(label),
-                size: wgpu::Extent3d {
-                    width: w,
-                    height: h,
-                    depth_or_array_layers: 1,
-                },
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format,
-                usage: wgpu::TextureUsages::RENDER_ATTACHMENT
-                    | wgpu::TextureUsages::TEXTURE_BINDING,
-                view_formats: &[],
-            })
+            device.create_texture(
+                &(wgpu::TextureDescriptor {
+                    label: Some(label),
+                    size: wgpu::Extent3d {
+                        width: w,
+                        height: h,
+                        depth_or_array_layers: 1,
+                    },
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format,
+                    usage: wgpu::TextureUsages::RENDER_ATTACHMENT |
+                    wgpu::TextureUsages::TEXTURE_BINDING,
+                    view_formats: &[],
+                })
+            )
         };
 
         let tex0 = create_texture("surface_buffer_0");

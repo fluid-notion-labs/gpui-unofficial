@@ -1368,10 +1368,42 @@ impl WgpuRenderer {
                 });
         }
 
-        let surface_texture = self
-            .surface
-            .get_current_texture()
-            .expect("Failed to acquire next swap chain texture");
+        // Acquire the next swapchain image.  On the first frame after window
+        // creation (or after a resize races with the GPU) the surface can be
+        // reported as `Outdated` or `Other`.  Rather than panicking we
+        // reconfigure and retry once; if the second attempt also fails we
+        // simply drop this frame.
+        let surface_texture = {
+            let first = self.surface.get_current_texture();
+            match first {
+                Ok(t) => t,
+                Err(wgpu::SurfaceError::Outdated)
+                | Err(wgpu::SurfaceError::Lost)
+                | Err(wgpu::SurfaceError::Other) => {
+                    // Reconfigure with the current known size and retry.
+                    self.surface
+                        .configure(&self.context.device, &self.surface_configuration);
+                    match self.surface.get_current_texture() {
+                        Ok(t) => t,
+                        Err(e) => {
+                            log::warn!(
+                                "Skipping frame: failed to acquire swap chain texture after reconfigure: {:?}",
+                                e
+                            );
+                            return;
+                        }
+                    }
+                }
+                Err(wgpu::SurfaceError::Timeout) => {
+                    log::warn!("Skipping frame: swap chain acquire timed out");
+                    return;
+                }
+                Err(wgpu::SurfaceError::OutOfMemory) => {
+                    log::warn!("Skipping frame: out of memory");
+                    return;
+                }
+            }
+        };
 
         let quads_bind_group = self
             .context
@@ -1635,64 +1667,46 @@ impl WgpuRenderer {
                                             bytemuck::bytes_of(&params),
                                         );
 
-                                        // fetch or create cached bind groups for this surface
-                                        let surface_bind_group = {
-                                            let mut cache =
-                                                self.surface_bind_groups.lock().unwrap();
-                                            let entry = cache
-                                                .entry(*surface_id)
-                                                .or_insert_with(|| {
-                                                    // create both groups for front index 0 and 1
-                                                    let v0 = self
-                                                        .context
-                                                        .surface_registry
-                                                        .view_at(*surface_id, 0)
-                                                        .unwrap();
-                                                    let v1 = self
-                                                        .context
-                                                        .surface_registry
-                                                        .view_at(*surface_id, 1)
-                                                        .unwrap();
-                                                    let create_bg = |view: &wgpu::TextureView| {
-                                                        self.context
-                                                            .device
-                                                            .create_bind_group(&wgpu::BindGroupDescriptor {
-                                                                label: Some("surface_bind_group"),
-                                                                layout: &self.pipelines.surfaces_bind_group_layout,
-                                                                entries: &[
-                                                                    wgpu::BindGroupEntry {
-                                                                        binding: 0,
-                                                                        resource:
-                                                                            wgpu::BindingResource::Buffer(
-                                                                                wgpu::BufferBinding {
-                                                                                    buffer: &self
-                                                                                        .surface_params_buffer,
-                                                                                    offset: 0,
-                                                                                    size: None,
-                                                                                },
-                                                                            ),
-                                                                    },
-                                                                    wgpu::BindGroupEntry {
-                                                                        binding: 1,
-                                                                        resource:
-                                                                            wgpu::BindingResource::TextureView(
-                                                                                view,
-                                                                            ),
-                                                                    },
-                                                                    wgpu::BindGroupEntry {
-                                                                        binding: 2,
-                                                                        resource:
-                                                                            wgpu::BindingResource::Sampler(
-                                                                                &self.surface_sampler,
-                                                                            ),
-                                                                    },
-                                                                ],
-                                                            })
-                                                    };
-                                                    [create_bg(&v0), create_bg(&v1)]
-                                                });
-                                            entry[idx].clone()
-                                        };
+                                        // Create bind group for the current front buffer
+                                        let view = self
+                                            .context
+                                            .surface_registry
+                                            .view_at(*surface_id, idx)
+                                            .unwrap();
+                                        let surface_bind_group = self.context
+                                            .device
+                                            .create_bind_group(&wgpu::BindGroupDescriptor {
+                                                label: Some("surface_bind_group"),
+                                                layout: &self.pipelines.surfaces_bind_group_layout,
+                                                entries: &[
+                                                    wgpu::BindGroupEntry {
+                                                        binding: 0,
+                                                        resource:
+                                                            wgpu::BindingResource::Buffer(
+                                                                wgpu::BufferBinding {
+                                                                    buffer: &self
+                                                                        .surface_params_buffer,
+                                                                    offset: 0,
+                                                                    size: None,
+                                                                },
+                                                            ),
+                                                    },
+                                                    wgpu::BindGroupEntry {
+                                                        binding: 1,
+                                                        resource:
+                                                            wgpu::BindingResource::TextureView(
+                                                                &view,
+                                                            ),
+                                                    },
+                                                    wgpu::BindGroupEntry {
+                                                        binding: 2,
+                                                        resource:
+                                                            wgpu::BindingResource::Sampler(
+                                                                &self.surface_sampler,
+                                                            ),
+                                                    },
+                                                ],
+                                            });
 
                                         pass.set_pipeline(&self.pipelines.surfaces_pipeline);
                                         pass.set_bind_group(
@@ -1715,11 +1729,6 @@ impl WgpuRenderer {
             }
         }
 
-        // remove cached bind groups for surfaces that disappeared this frame
-        {
-            let mut cache = self.surface_bind_groups.lock().unwrap();
-            cache.retain(|id, _| seen_surfaces.contains(id));
-        }
         self.context.queue.submit(Some(command_encoder.finish()));
 
         surface_texture.present();

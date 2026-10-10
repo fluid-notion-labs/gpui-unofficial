@@ -96,7 +96,7 @@ impl CrossWindow {
             .expect("winit_window already initialized");
 
         if initial_size.width > 0 && initial_size.height > 0 {
-            let renderer = WgpuRenderer::new(
+            let mut renderer = WgpuRenderer::new(
                 self.0.wgpu_context.clone(),
                 self.window(),
                 self.0.sprite_atlas.clone(),
@@ -105,6 +105,16 @@ impl CrossWindow {
                 4,
             )
             .expect("Failed to create renderer");
+
+            // Configure the wgpu surface immediately so that any
+            // `get_current_texture()` call that arrives before the first OS
+            // `Resized` event (e.g. from a background render thread calling
+            // `present()`) does not fail with `SurfaceError::Other` on an
+            // unconfigured surface.
+            renderer.update_drawable_size(crate::geometry::Size {
+                width: crate::DevicePixels(initial_size.width as i32),
+                height: crate::DevicePixels(initial_size.height as i32),
+            });
 
             let _ = self.0.renderer.set(RefCell::new(renderer));
             self.window().request_redraw();
