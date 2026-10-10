@@ -3,7 +3,6 @@ use std::sync::Arc;
 use collections::FxHashMap;
 use etagere::BucketedAtlasAllocator;
 use parking_lot::Mutex;
-use wgpu::util::DeviceExt;
 
 use crate::{
     AtlasKey, AtlasTextureId, AtlasTextureKind, AtlasTile, Bounds, DevicePixels, PlatformAtlas,
@@ -256,14 +255,26 @@ impl WgpuAtlasState {
 
         let contents = padded_data.as_deref().unwrap_or(bytes);
 
-        let buffer = self
-            .context
-            .device
-            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: None,
-                usage: wgpu::BufferUsages::COPY_SRC,
-                contents,
-            });
+        // Work around driver issues in mapped-at-creation path (see helio/ship_flight repro).
+        // Using `queue.write_buffer` avoids `Buffer::get_mapped_range` in wgpu_core.
+        let unpadded_size = contents.len() as u64;
+        let align_mask = wgpu::COPY_BUFFER_ALIGNMENT - 1;
+        let padded_size = ((unpadded_size + align_mask) & !align_mask).max(wgpu::COPY_BUFFER_ALIGNMENT);
+
+        let buffer = self.context.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("atlas_upload_buffer"),
+            size: padded_size,
+            usage: wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let mut padded_contents = Vec::with_capacity(padded_size as usize);
+        padded_contents.extend_from_slice(contents);
+        padded_contents.resize(padded_size as usize, 0);
+
+        self.context
+            .queue
+            .write_buffer(&buffer, 0, &padded_contents);
 
         self.uploads.push(PendingUpload {
             texture_id,
