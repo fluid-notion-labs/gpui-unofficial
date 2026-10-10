@@ -658,7 +658,17 @@ impl WgpuContext {
     }
 
     pub fn uses_webgl_instance_data(&self) -> bool {
-        matches!(self.backend, WgpuBackend::Gl) && cfg!(target_family = "wasm")
+        let storage_buffers = self.device.limits().max_storage_buffers_per_shader_stage;
+        if storage_buffers == 0 {
+            return true;
+        }
+        // Native GL stacks may expose storage buffers in fragment/compute
+        // but not in the vertex stage (e.g. Mesa r600 on TeraScale reports
+        // GL_MAX_VERTEX_SHADER_STORAGE_BLOCKS = 0), and wgpu's limits cannot
+        // express the per-stage split — the mismatch only surfaces as a
+        // fatal shader-translation error at pipeline creation. Use the
+        // texture-based instance transport on any GL backend.
+        matches!(self.backend, WgpuBackend::Gl)
     }
 
     pub fn supports_dual_source_blending(&self) -> bool {
