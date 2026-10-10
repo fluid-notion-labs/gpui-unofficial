@@ -25,6 +25,7 @@ license = "Apache-2.0"
 repository = "https://github.com/iamnbutler/gpui-unofficial"
 
 [features]
+wgpu = ["gpui/wgpu"]
 bench-support = [
     "gpui/bench-support",
     "gpui_macos/bench-support",

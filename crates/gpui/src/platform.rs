@@ -1,3 +1,6 @@
+#[cfg(feature = "wgpu")]
+pub mod cross;
+
 mod app_menu;
 mod keyboard;
 mod keystroke;

@@ -44,11 +44,23 @@ ignored = [
 ignored-paths = ["src/_ownership_and_data_flow.rs"]
 
 [features]
+wgpu = [
+    "dep:font-kit",
+    "dep:bytemuck",
+    "dep:winit",
+    "dep:wgpu",
+    "dep:arboard",
+    "dep:device_query",
+    "dep:priority-threadpool",
+    "dep:pathfinder_geometry",
+    "dep:cosmic-text",
+]
 bench = ["bench-support"]
 bench-support = [
     "profiler",
     "dep:criterion",
 ]
+font-kit = ["dep:font-kit"]
 default = [
     "font-kit",
     "wayland",
@@ -618,3 +630,41 @@ features = ["test-support"]
 version = "=1.20.0-pre"
 package = "reqwest-client-gpui-unofficial"
 features = ["test-support"]
+
+# --- wgpu (winit) backend, feature-gated; vendored from mdeand/gpui-wgpu ---
+[dependencies.winit]
+version = "0.30"
+optional = true
+
+[dependencies.wgpu]
+version = "29.0.4"
+optional = true
+
+[dependencies.arboard]
+version = "3.6"
+optional = true
+
+[dependencies.device_query]
+version = "2.1"
+optional = true
+
+[dependencies.priority-threadpool]
+path = "../priority-threadpool"
+optional = true
+
+[dependencies.pathfinder_geometry]
+version = "0.5"
+optional = true
+
+[dependencies.cosmic-text]
+version = "0.19"
+optional = true
+
+[dependencies.bytemuck]
+version = "1"
+optional = true
+features = ["derive"]
+
+[dependencies.font-kit]
+version = "0.14"
+optional = true

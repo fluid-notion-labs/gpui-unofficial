@@ -55,6 +55,14 @@ pub fn web_init() {
 
 /// Returns the default [`Platform`] for the current OS.
 pub fn current_platform(headless: bool) -> Rc<dyn Platform> {
+    #[cfg(feature = "wgpu")]
+    {
+        let _ = headless;
+        return Rc::new(
+            gpui::platform::cross::platform::CrossPlatform::new()
+                .expect("failed to initialize the wgpu (winit) platform"),
+        );
+    }
     #[cfg(target_os = "macos")]
     {
         Rc::new(gpui_macos::MacPlatform::new(headless))
