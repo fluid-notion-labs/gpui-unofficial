@@ -13,6 +13,9 @@ use crate::{
     point,
 };
 
+#[cfg(target_os = "macos")]
+use winit::platform::macos::WindowAttributesExtMacOS;
+
 fn device_button_to_gpui(button: u32) -> Option<MouseButton> {
     match button {
         0 => Some(MouseButton::Left),
@@ -195,11 +198,12 @@ impl Platform for CrossPlatform {
                 options.window_decorations,
                 Some(crate::WindowDecorations::Client)
             );
-            let attributes = winit::window::Window::default_attributes()
+            let mut attributes = winit::window::Window::default_attributes()
                 .with_title(
                     options
                         .titlebar
-                        .and_then(|t| t.title)
+                        .as_ref()
+                        .and_then(|t| t.title.as_ref())
                         .map(|t| t.to_string())
                         .unwrap_or_else(|| "GPUI".into()),
                 )
@@ -208,6 +212,18 @@ impl Platform for CrossPlatform {
                     bounds.size.width.0 as f64,
                     bounds.size.height.0 as f64,
                 ));
+
+            #[cfg(target_os = "macos")]
+            if use_client_decorations {
+                if let Some(titlebar) = options.titlebar.as_ref() {
+                    attributes = attributes
+                        .with_decorations(true)
+                        .with_title_hidden(true)
+                        .with_titlebar_transparent(titlebar.appears_transparent)
+                        .with_fullsize_content_view(true)
+                        .with_movable_by_window_background(true);
+                }
+            }
 
             let winit_window = event_loop
                 .create_window(attributes)
