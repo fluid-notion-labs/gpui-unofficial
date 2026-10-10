@@ -264,16 +264,11 @@ impl WgpuAtlasState {
         let buffer = self.context.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("atlas_upload_buffer"),
             size: padded_size,
-            usage: wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::MAP_WRITE,
-            mapped_at_creation: true,
+            usage: wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
         });
 
-        {
-            let mut mapping = buffer.slice(0..padded_size).get_mapped_range_mut();
-            mapping[..unpadded_size as usize].copy_from_slice(contents);
-        }
-
-        buffer.unmap();
+        self.context.queue.write_buffer(&buffer, 0, contents);
 
         self.uploads.push(PendingUpload {
             texture_id,
