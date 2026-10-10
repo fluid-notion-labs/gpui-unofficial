@@ -445,8 +445,19 @@ impl winit::application::ApplicationHandler<CrossEvent> for AppState {
         &mut self,
         _event_loop: &ActiveEventLoop,
         _device_id: winit::event::DeviceId,
-        _event: winit::event::DeviceEvent,
+        event: winit::event::DeviceEvent,
     ) {
+        if std::env::var_os("GPUI_DEBUG_MOUSE").is_some() {
+            match &event {
+                winit::event::DeviceEvent::Button { button, state } => {
+                    eprintln!(
+                        "[WGPUI] DeviceEvent Button {:?} {:?} pressed_button={:?}",
+                        button, state, self.pressed_button
+                    );
+                }
+                _ => {}
+            }
+        }
     }
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
