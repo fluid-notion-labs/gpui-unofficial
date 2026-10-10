@@ -22,7 +22,7 @@ pub struct WgpuContext {
 impl WgpuContext {
     pub fn new() -> anyhow::Result<Self> {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::all(),
+            backends: wgpu::Backends::VULKAN,
             ..Default::default()
         });
 
