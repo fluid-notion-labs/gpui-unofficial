@@ -227,15 +227,13 @@ impl SurfaceRegistry {
                 return;
             }
 
-            // GPU SYNC: Wait for all pending GPU work to complete before destroying textures
-            // This prevents use-after-free and ensures all GPU commands finish
-            // Use a short timeout to avoid blocking forever if something goes wrong
-            let _ = device.poll(wgpu::PollType::Wait {
-                submission_index: None,  // Wait for all submissions
-                timeout: Some(std::time::Duration::from_secs(5)), // 5 second timeout
-            });
+            // NOTE: We do NOT call device.poll() here because:
+            // 1. The render thread owns the device and may be actively using it
+            // 2. Calling poll from compositor thread causes device corruption
+            // 3. WGPU internally ref-counts textures, so old views remain valid until dropped
+            // 4. The skip-if-redraw-pending check above prevents resize during active composition
 
-            // Now safe to recreate textures - all GPU work is complete
+            // Now safe to recreate textures
             let new_tb = Self::create_triple_buffer(device, width, height, tb.format);
             *tb = new_tb;
         }

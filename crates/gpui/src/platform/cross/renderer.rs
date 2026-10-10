@@ -1687,7 +1687,7 @@ impl WgpuRenderer {
                         log::debug!("Renderer: processing {} surface(s)", surfaces.len());
                         for surface in surfaces {
                             if let crate::SurfaceContent::Wgpu(surface_id) = &surface.content {
-                                log::debug!("[surface_id={:?}] Renderer: processing WGPU surface", surface_id);
+                                log::info!("[COMPOSITOR PAINT] Processing WGPU surface {:?}", surface_id);
 
                                 // Atomically swap ready ↔ display buffers with GPU sync
                                 let swapped = self.context.surface_registry.swap_ready_display(
@@ -1695,14 +1695,12 @@ impl WgpuRenderer {
                                     *surface_id
                                 );
 
-                                if swapped {
-                                    log::trace!("[surface_id={:?}] Swapped to new frame", surface_id);
-                                }
+                                log::info!("[COMPOSITOR PAINT] Swap result: {}", swapped);
 
                                 if let Some(view) =
                                     self.context.surface_registry.front_view(*surface_id)
                                 {
-                                    log::debug!("[surface_id={:?}] Renderer: got display view after swap", surface_id);
+                                    log::info!("[COMPOSITOR PAINT] Got front view for surface {:?}", surface_id);
 
                                     let params = SurfaceParams {
                                         bounds: Bounds {
@@ -1834,7 +1832,7 @@ impl WgpuRenderer {
     /// Fast path: blit a surface directly to persistent framebuffer WITHOUT running compositor
     /// Returns true if successful, false if bounds cache miss (need full compositor)
     pub fn blit_surface_direct(&self, surface_id: SurfaceId) -> bool {
-        log::debug!("[surface_id={:?}] Attempting fast blit", surface_id);
+        log::info!("[FAST BLIT] Attempting for surface {:?}", surface_id);
 
         // 1. Check if we have cached bounds
         let cache = self.surface_bounds_cache.lock().unwrap();
@@ -2002,7 +2000,7 @@ impl WgpuRenderer {
             .surface_registry
             .clear_redraw_pending(surface_id);
 
-        log::debug!("[surface_id={:?}] Fast blit succeeded", surface_id);
+        log::info!("[FAST BLIT] SUCCESS for surface {:?}", surface_id);
         true // Success
     }
 
