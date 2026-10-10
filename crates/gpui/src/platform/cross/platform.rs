@@ -215,14 +215,17 @@ impl Platform for CrossPlatform {
 
             #[cfg(target_os = "macos")]
             if use_client_decorations {
-                if let Some(titlebar) = options.titlebar.as_ref() {
-                    attributes = attributes
-                        .with_decorations(true)
-                        .with_title_hidden(true)
-                        .with_titlebar_transparent(titlebar.appears_transparent)
-                        .with_fullsize_content_view(true)
-                        .with_movable_by_window_background(true);
-                }
+                let appears_transparent = options
+                    .titlebar
+                    .as_ref()
+                    .map(|t| t.appears_transparent)
+                    .unwrap_or(true);
+                attributes = attributes
+                    .with_decorations(true)
+                    .with_title_hidden(true)
+                    .with_titlebar_transparent(appears_transparent)
+                    .with_fullsize_content_view(true)
+                    .with_movable_by_window_background(true);
             }
 
             let winit_window = event_loop
