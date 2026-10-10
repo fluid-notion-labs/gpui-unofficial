@@ -1,6 +1,7 @@
 use crate::{
-    Bounds, Capslock, Modifiers, Pixels, PlatformInputHandler, PlatformWindow, Point, Size,
-    WgpuSurfaceHandle, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
+    Bounds, Capslock, Decorations, Modifiers, Pixels, PlatformInputHandler,
+    PlatformWindow, Point, ResizeEdge, Size, WgpuSurfaceHandle, WindowAppearance,
+    WindowBackgroundAppearance, WindowBounds,
     platform::cross::{
         atlas::WgpuAtlas,
         dispatcher::CrossEvent,
@@ -382,6 +383,35 @@ impl PlatformWindow for CrossWindow {
     }
 
     fn update_ime_position(&self, _bounds: crate::Bounds<crate::Pixels>) {}
+
+    fn start_window_move(&self) {
+        let _ = self.window().drag_window();
+    }
+
+    fn start_window_resize(&self, edge: ResizeEdge) {
+        use winit::window::ResizeDirection;
+        let direction = match edge {
+            ResizeEdge::Top => ResizeDirection::North,
+            ResizeEdge::TopRight => ResizeDirection::NorthEast,
+            ResizeEdge::Right => ResizeDirection::East,
+            ResizeEdge::BottomRight => ResizeDirection::SouthEast,
+            ResizeEdge::Bottom => ResizeDirection::South,
+            ResizeEdge::BottomLeft => ResizeDirection::SouthWest,
+            ResizeEdge::Left => ResizeDirection::West,
+            ResizeEdge::TopLeft => ResizeDirection::NorthWest,
+        };
+        let _ = self.window().drag_resize_window(direction);
+    }
+
+    fn window_decorations(&self) -> Decorations {
+        if self.window().is_decorated() {
+            Decorations::Server
+        } else {
+            Decorations::Client {
+                tiling: crate::Tiling::default(),
+            }
+        }
+    }
 }
 
 impl raw_window_handle::HasDisplayHandle for CrossWindow {

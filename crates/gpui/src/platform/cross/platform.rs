@@ -58,6 +58,7 @@ struct AppState {
     current_modifiers: Modifiers,
     pressed_button: Option<MouseButton>,
     click_state: ClickState,
+    hovered_window_id: Cell<Option<winit::window::WindowId>>,
 }
 
 struct ClickState {
@@ -120,6 +121,7 @@ impl Platform for CrossPlatform {
                 last_time: None,
                 current_count: 0,
             },
+            hovered_window_id: Cell::new(None),
         };
 
         event_loop
@@ -178,6 +180,10 @@ impl Platform for CrossPlatform {
 
         let success = with_active_context(|event_loop, app_state| {
             let bounds = options.bounds;
+            let use_client_decorations = matches!(
+                options.window_decorations,
+                Some(crate::WindowDecorations::Client)
+            );
             let attributes = winit::window::Window::default_attributes()
                 .with_title(
                     options
@@ -186,6 +192,7 @@ impl Platform for CrossPlatform {
                         .map(|t| t.to_string())
                         .unwrap_or_else(|| "GPUI".into()),
                 )
+                .with_decorations(!use_client_decorations)
                 .with_inner_size(winit::dpi::LogicalSize::new(
                     bounds.size.width.0 as f64,
                     bounds.size.height.0 as f64,
@@ -294,7 +301,50 @@ impl Platform for CrossPlatform {
         ))
     }
 
-    fn set_cursor_style(&self, _style: crate::CursorStyle) {}
+    fn set_cursor_style(&self, style: crate::CursorStyle) {
+        use winit::window::CursorIcon;
+        let icon = match style {
+            crate::CursorStyle::Arrow => CursorIcon::Default,
+            crate::CursorStyle::IBeam => CursorIcon::Text,
+            crate::CursorStyle::Crosshair => CursorIcon::Crosshair,
+            crate::CursorStyle::ClosedHand => CursorIcon::Grabbing,
+            crate::CursorStyle::OpenHand => CursorIcon::Grab,
+            crate::CursorStyle::PointingHand => CursorIcon::Pointer,
+            crate::CursorStyle::ResizeLeft => CursorIcon::WResize,
+            crate::CursorStyle::ResizeRight => CursorIcon::EResize,
+            crate::CursorStyle::ResizeLeftRight => CursorIcon::EwResize,
+            crate::CursorStyle::ResizeUp => CursorIcon::NResize,
+            crate::CursorStyle::ResizeDown => CursorIcon::SResize,
+            crate::CursorStyle::ResizeUpDown => CursorIcon::NsResize,
+            crate::CursorStyle::ResizeUpLeftDownRight => CursorIcon::NwseResize,
+            crate::CursorStyle::ResizeUpRightDownLeft => CursorIcon::NeswResize,
+            crate::CursorStyle::ResizeColumn => CursorIcon::ColResize,
+            crate::CursorStyle::ResizeRow => CursorIcon::RowResize,
+            crate::CursorStyle::IBeamCursorForVerticalLayout => CursorIcon::VerticalText,
+            crate::CursorStyle::DragLink => CursorIcon::Alias,
+            crate::CursorStyle::DragCopy => CursorIcon::Copy,
+            crate::CursorStyle::ContextualMenu => CursorIcon::ContextMenu,
+            crate::CursorStyle::OperationNotAllowed => CursorIcon::NotAllowed,
+            crate::CursorStyle::None => {
+                with_active_context(|_, app_state| {
+                    if let Some(wid) = app_state.hovered_window_id.get() {
+                        if let Some(window) = app_state.windows.get(&wid) {
+                            window.window().set_cursor_visible(false);
+                        }
+                    }
+                });
+                return;
+            }
+        };
+        with_active_context(|_, app_state| {
+            if let Some(wid) = app_state.hovered_window_id.get() {
+                if let Some(window) = app_state.windows.get(&wid) {
+                    window.window().set_cursor_visible(true);
+                    window.window().set_cursor(icon);
+                }
+            }
+        });
+    }
 
     fn should_auto_hide_scrollbars(&self) -> bool {
         // TODO(mdeand): How do we want to implement this? For now, just return false.
@@ -592,6 +642,7 @@ impl winit::application::ApplicationHandler<CrossEvent> for AppState {
             }
 
             winit::event::WindowEvent::CursorMoved { position, .. } => {
+                self.hovered_window_id.set(Some(window_id));
                 let scale_factor = window.scale_factor();
                 let position = point(
                     Pixels(position.x as f32 / scale_factor),
@@ -616,6 +667,7 @@ impl winit::application::ApplicationHandler<CrossEvent> for AppState {
             }
 
             winit::event::WindowEvent::CursorLeft { .. } => {
+                self.hovered_window_id.set(None);
                 let position = window.0.state.mouse_position.get();
                 let platform_event = PlatformInput::MouseExited(MouseExitEvent {
                     position,
