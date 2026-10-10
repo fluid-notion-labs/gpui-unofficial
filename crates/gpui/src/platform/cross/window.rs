@@ -382,17 +382,6 @@ impl PlatformWindow for CrossWindow {
     }
 
     fn update_ime_position(&self, _bounds: crate::Bounds<crate::Pixels>) {}
-
-    #[cfg(target_os = "windows")]
-    fn get_raw_handle(&self) -> windows::Win32::Foundation::HWND {
-        use raw_window_handle::{HasWindowHandle, RawWindowHandle};
-        if let Ok(handle) = self.window().window_handle() {
-            if let RawWindowHandle::Win32(win32_handle) = handle.as_raw() {
-                return windows::Win32::Foundation::HWND(win32_handle.hwnd.get() as *mut _);
-            }
-        }
-        windows::Win32::Foundation::HWND(std::ptr::null_mut())
-    }
 }
 
 impl raw_window_handle::HasDisplayHandle for CrossWindow {

@@ -301,18 +301,8 @@ impl Platform for CrossPlatform {
         false
     }
 
-    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-    fn write_to_primary(&self, _item: crate::ClipboardItem) {
-        log::warn!("write_to_primary is not yet implemented on this platform");
-    }
-
     fn write_to_clipboard(&self, _item: crate::ClipboardItem) {
         log::warn!("write_to_clipboard is not yet implemented on this platform");
-    }
-
-    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-    fn read_from_primary(&self) -> Option<crate::ClipboardItem> {
-        None
     }
 
     fn read_from_clipboard(&self) -> Option<crate::ClipboardItem> {
