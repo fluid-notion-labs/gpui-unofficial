@@ -12,6 +12,7 @@ use crate::{
 use std::{
     cell::{Cell, OnceCell, RefCell},
     sync::Arc,
+    time::{Duration, Instant},
 };
 use winit::event_loop::EventLoopProxy;
 
@@ -36,7 +37,10 @@ pub(crate) struct CrossWindowState {
     pub(crate) capslock: Cell<Capslock>,
     pub(crate) is_hovered: Cell<bool>,
     pub(crate) is_resizing: Cell<bool>,
+    pub(crate) last_resize_event: Cell<Option<Instant>>,
 }
+
+const RESIZE_GRACE_PERIOD: Duration = Duration::from_millis(200);
 
 #[derive(Default)]
 pub(crate) struct Callbacks {
@@ -256,6 +260,13 @@ impl PlatformWindow for CrossWindow {
 
     fn is_resizing(&self) -> bool {
         self.0.state.is_resizing.get()
+            || self
+                .0
+                .state
+                .last_resize_event
+                .get()
+                .map(|t| t.elapsed() < RESIZE_GRACE_PERIOD)
+                .unwrap_or(false)
     }
 
     fn set_title(&mut self, title: &str) {

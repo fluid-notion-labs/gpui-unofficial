@@ -577,6 +577,7 @@ impl winit::application::ApplicationHandler<CrossEvent> for AppState {
                 }
 
                 window.0.state.is_resizing.set(true);
+                window.0.state.last_resize_event.set(Some(Instant::now()));
                 let scale_factor = window.scale_factor();
 
                 if let Some(renderer) = window.0.renderer.get() {
@@ -857,6 +858,7 @@ impl winit::application::ApplicationHandler<CrossEvent> for AppState {
                         self.pressed_button = None;
                         if mouse_button == MouseButton::Left {
                             window.0.state.is_resizing.set(false);
+                            window.0.state.last_resize_event.set(None);
                         }
 
                         let platform_event = PlatformInput::MouseUp(MouseUpEvent {
