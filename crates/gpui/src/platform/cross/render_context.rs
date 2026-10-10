@@ -15,6 +15,7 @@ pub struct WgpuContext {
     pub(super) mono_sprites_buffer: wgpu::Buffer,
     pub(super) poly_sprites_buffer: wgpu::Buffer,
     pub(super) color_adjustments_buffer: wgpu::Buffer,
+        pub(super) paths_vertices_buffer: wgpu::Buffer,
 
     pub(crate) surface_registry: Arc<SurfaceRegistry>,
 }
@@ -133,6 +134,13 @@ impl WgpuContext {
                 | wgpu::BufferUsages::STORAGE,
             mapped_at_creation: false,
         });
+        
+            let paths_vertices_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("Path Vertices Buffer"),
+                size: 4 * 1024 * 1024, // 4 MB – ~87 k vertices @ 48 bytes each
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
 
         let color_adjustments_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Color Adjustments Buffer"),
@@ -157,6 +165,7 @@ impl WgpuContext {
             poly_sprites_buffer,
             color_adjustments_buffer,
 
+                paths_vertices_buffer,
             surface_registry: Arc::new(SurfaceRegistry::new()),
         })
     }
