@@ -580,7 +580,7 @@ impl winit::application::ApplicationHandler<CrossEvent> for AppState {
                     &window.0.state.callbacks.on_request_frame,
                     |cb| {
                         cb(crate::RequestFrameOptions {
-                            force_render: false,
+                            force_render: true,  // Force compositor to run when explicitly requested
                             require_presentation: true,
                         });
                     },
