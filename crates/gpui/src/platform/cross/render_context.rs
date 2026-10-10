@@ -35,7 +35,7 @@ impl WgpuContext {
         let (device, queue) =
             pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
                 label: None,
-                required_features: wgpu::Features::empty(),
+                required_features: wgpu::Features::TIMESTAMP_QUERY | wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS,
                 required_limits: wgpu::Limits::default(),
                 ..Default::default()
             }))?;
