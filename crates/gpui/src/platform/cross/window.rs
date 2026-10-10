@@ -83,6 +83,12 @@ impl CrossWindow {
     pub(crate) fn initialize(&self, winit_window: winit::window::Window) {
         let initial_size = winit_window.inner_size();
 
+        #[cfg(target_os = "windows")]
+        {
+            use winit::platform::windows::{CornerPreference, WindowExtWindows};
+            winit_window.set_corner_preference(CornerPreference::Round);
+        }
+
         self.0
             .winit_window
             .set(Arc::new(winit_window))
