@@ -279,3 +279,8 @@ default-features = false
 level = "warn"
 priority = 0
 check-cfg = ['cfg(feature, values("nightly_coverage"))']
+
+[dependencies.image]
+version = "0.25.1"
+default-features = false
+features = ["bmp", "dds", "exr", "ff", "gif", "hdr", "ico", "jpeg", "png", "pnm", "qoi", "rayon", "tga", "tiff", "webp"]
