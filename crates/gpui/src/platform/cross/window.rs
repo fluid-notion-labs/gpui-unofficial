@@ -34,6 +34,7 @@ pub(crate) struct CrossWindowState {
     pub(crate) mouse_position: Cell<Point<Pixels>>,
     pub(crate) modifiers: Cell<Modifiers>,
     pub(crate) capslock: Cell<Capslock>,
+    pub(crate) is_hovered: Cell<bool>,
 }
 
 #[derive(Default)]
@@ -239,8 +240,7 @@ impl PlatformWindow for CrossWindow {
     }
 
     fn is_hovered(&self) -> bool {
-        // TODO(mdeand): Add support for tracking hover status.
-        false
+        self.0.state.is_hovered.get()
     }
 
     fn set_title(&mut self, title: &str) {

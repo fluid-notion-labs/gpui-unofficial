@@ -643,6 +643,17 @@ impl winit::application::ApplicationHandler<CrossEvent> for AppState {
 
             winit::event::WindowEvent::CursorMoved { position, .. } => {
                 self.hovered_window_id.set(Some(window_id));
+                let was_hovered = window.0.state.is_hovered.get();
+                window.0.state.is_hovered.set(true);
+                if !was_hovered {
+                    window
+                        .0
+                        .state
+                        .callbacks
+                        .invoke_mut(&window.0.state.callbacks.on_hover_status_change, |cb| {
+                            cb(true);
+                        });
+                }
                 let scale_factor = window.scale_factor();
                 let position = point(
                     Pixels(position.x as f32 / scale_factor),
@@ -668,6 +679,14 @@ impl winit::application::ApplicationHandler<CrossEvent> for AppState {
 
             winit::event::WindowEvent::CursorLeft { .. } => {
                 self.hovered_window_id.set(None);
+                window.0.state.is_hovered.set(false);
+                window
+                    .0
+                    .state
+                    .callbacks
+                    .invoke_mut(&window.0.state.callbacks.on_hover_status_change, |cb| {
+                        cb(false);
+                    });
                 let position = window.0.state.mouse_position.get();
                 let platform_event = PlatformInput::MouseExited(MouseExitEvent {
                     position,
