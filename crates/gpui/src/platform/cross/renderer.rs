@@ -731,7 +731,7 @@ impl WgpuPipelines {
                 .device
                 .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                     label: Some("quads_pipeline_layout"),
-                    bind_group_layouts: &[&globals_bind_group_layout, &quads_bind_group_layout],
+                    bind_group_layouts: &[Some(&globals_bind_group_layout), Some(&quads_bind_group_layout)],
                     immediate_size: 0,
                 });
 
@@ -757,7 +757,7 @@ impl WgpuPipelines {
                 .device
                 .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                     label: Some("shadows_pipeline_layout"),
-                    bind_group_layouts: &[&globals_bind_group_layout, &shadows_bind_group_layout],
+                    bind_group_layouts: &[Some(&globals_bind_group_layout), Some(&shadows_bind_group_layout)],
                     immediate_size: 0,
                 });
 
@@ -784,8 +784,8 @@ impl WgpuPipelines {
                 .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                     label: Some("underlines_pipeline_layout"),
                     bind_group_layouts: &[
-                        &globals_bind_group_layout,
-                        &underlines_bind_group_layout,
+                        Some(&globals_bind_group_layout),
+                        Some(&underlines_bind_group_layout),
                     ],
                     immediate_size: 0,
                 });
@@ -813,10 +813,10 @@ impl WgpuPipelines {
                 .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                     label: Some("Mono sprites pipeline layout"),
                     bind_group_layouts: &[
-                        &globals_bind_group_layout,
-                        &color_adjustments_bind_group_layout,
-                        &sprites_bind_group_layout,
-                        &mono_sprites_bind_group_layout,
+                        Some(&globals_bind_group_layout),
+                        Some(&color_adjustments_bind_group_layout),
+                        Some(&sprites_bind_group_layout),
+                        Some(&mono_sprites_bind_group_layout),
                     ],
                     immediate_size: 0,
                 });
@@ -844,9 +844,9 @@ impl WgpuPipelines {
                 .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                     label: Some("Poly sprites pipeline layout"),
                     bind_group_layouts: &[
-                        &globals_bind_group_layout,
-                        &sprites_bind_group_layout,
-                        &poly_sprites_bind_group_layout,
+                        Some(&globals_bind_group_layout),
+                        Some(&sprites_bind_group_layout),
+                        Some(&poly_sprites_bind_group_layout),
                     ],
                     immediate_size: 0,
                 });
@@ -898,7 +898,7 @@ impl WgpuPipelines {
                 .device
                 .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                     label: Some("surfaces_pipeline_layout"),
-                    bind_group_layouts: &[&globals_bind_group_layout, &surfaces_bind_group_layout],
+                    bind_group_layouts: &[Some(&globals_bind_group_layout), Some(&surfaces_bind_group_layout)],
                     immediate_size: 0,
                 });
 
