@@ -1,0 +1,38 @@
+# Reconstructed gpui workspace from crates.io tarballs
+#
+# Vendored closure of the -gpui-unofficial mirror at 1.20.0-pre, laid
+# out in zed-tree crates/ structure so zed-format patches apply
+# with identity path mapping. Mirror reqs like "1.20.0-pre" are carets
+# that admit every later final; without these path patches the
+# registry-resolved siblings would float to the newest release —
+# the split-brain gpui-distribution research warns about.
+[workspace]
+members = ["crates/collections-gpui-unofficial", "crates/derive-refineable-gpui-unofficial", "crates/gpui", "crates/gpui-apple-gpui-unofficial", "crates/gpui-macos-gpui-unofficial", "crates/gpui-macros-gpui-unofficial", "crates/gpui-shared-string-gpui-unofficial", "crates/gpui-util-gpui-unofficial", "crates/gpui-web-gpui-unofficial", "crates/gpui-windows-gpui-unofficial", "crates/gpui_linux", "crates/gpui_platform", "crates/gpui_wgpu", "crates/http-client-gpui-unofficial", "crates/media-gpui-unofficial", "crates/path-gpui-unofficial", "crates/perf-gpui-unofficial", "crates/refineable-gpui-unofficial", "crates/scheduler-gpui-unofficial", "crates/sum-tree-gpui-unofficial", "crates/util-gpui-unofficial", "crates/util-macros-gpui-unofficial", "crates/zlog-gpui-unofficial", "crates/ztracing-gpui-unofficial", "crates/ztracing-macro-gpui-unofficial"]
+resolver = "3"
+
+[patch.crates-io]
+collections-gpui-unofficial = { path = "crates/collections-gpui-unofficial" }
+derive-refineable-gpui-unofficial = { path = "crates/derive-refineable-gpui-unofficial" }
+gpui-apple-gpui-unofficial = { path = "crates/gpui-apple-gpui-unofficial" }
+gpui-linux-gpui-unofficial = { path = "crates/gpui_linux" }
+gpui-macos-gpui-unofficial = { path = "crates/gpui-macos-gpui-unofficial" }
+gpui-macros-gpui-unofficial = { path = "crates/gpui-macros-gpui-unofficial" }
+gpui-platform-gpui-unofficial = { path = "crates/gpui_platform" }
+gpui-shared-string-gpui-unofficial = { path = "crates/gpui-shared-string-gpui-unofficial" }
+gpui-unofficial = { path = "crates/gpui" }
+gpui-util-gpui-unofficial = { path = "crates/gpui-util-gpui-unofficial" }
+gpui-web-gpui-unofficial = { path = "crates/gpui-web-gpui-unofficial" }
+gpui-wgpu-gpui-unofficial = { path = "crates/gpui_wgpu" }
+gpui-windows-gpui-unofficial = { path = "crates/gpui-windows-gpui-unofficial" }
+http-client-gpui-unofficial = { path = "crates/http-client-gpui-unofficial" }
+media-gpui-unofficial = { path = "crates/media-gpui-unofficial" }
+path-gpui-unofficial = { path = "crates/path-gpui-unofficial" }
+perf-gpui-unofficial = { path = "crates/perf-gpui-unofficial" }
+refineable-gpui-unofficial = { path = "crates/refineable-gpui-unofficial" }
+scheduler-gpui-unofficial = { path = "crates/scheduler-gpui-unofficial" }
+sum-tree-gpui-unofficial = { path = "crates/sum-tree-gpui-unofficial" }
+util-gpui-unofficial = { path = "crates/util-gpui-unofficial" }
+util-macros-gpui-unofficial = { path = "crates/util-macros-gpui-unofficial" }
+zlog-gpui-unofficial = { path = "crates/zlog-gpui-unofficial" }
+ztracing-gpui-unofficial = { path = "crates/ztracing-gpui-unofficial" }
+ztracing-macro-gpui-unofficial = { path = "crates/ztracing-macro-gpui-unofficial" }
