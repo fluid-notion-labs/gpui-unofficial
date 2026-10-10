@@ -1873,11 +1873,31 @@ impl WgpuRenderer {
             screen_bounds
         );
 
-        // Acquire swapchain
+        // Acquire swapchain (handle retryable surface errors the same as regular draw).
         let surface_texture = match self.surface.get_current_texture() {
             Ok(t) => t,
-            Err(e) => {
-                log::warn!("Fast blit failed to acquire swapchain: {:?}", e);
+            Err(wgpu::SurfaceError::Outdated)
+            | Err(wgpu::SurfaceError::Lost)
+            | Err(wgpu::SurfaceError::Other) => {
+                self.surface
+                    .configure(&self.context.device, &self.surface_configuration);
+                match self.surface.get_current_texture() {
+                    Ok(t) => t,
+                    Err(e) => {
+                        log::warn!(
+                            "Fast blit failed to acquire swapchain after reconfigure: {:?}",
+                            e
+                        );
+                        return false;
+                    }
+                }
+            }
+            Err(wgpu::SurfaceError::Timeout) => {
+                log::warn!("Fast blit failed: swapchain acquire timed out");
+                return false;
+            }
+            Err(wgpu::SurfaceError::OutOfMemory) => {
+                log::warn!("Fast blit failed: out of memory");
                 return false;
             }
         };
