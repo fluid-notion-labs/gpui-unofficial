@@ -150,20 +150,9 @@ impl SurfaceRegistry {
             let current = tb.state.load(Ordering::Acquire);
             let (rendering, ready, display) = TripleBuffer::unpack_state(current);
 
-            // Check if ready buffer has new content to display
-            let submission_indices = tb.submission_indices.lock().unwrap();
-            let has_new_content = submission_indices[ready as usize].is_some();
-            drop(submission_indices); // Release lock before atomic swap
-
-            // GPU SYNC: Poll device to ensure all pending GPU work is complete
-            // This prevents the compositor from sampling incomplete frames
-            if has_new_content {
-                // Wait for all GPU work to complete (blocking call)
-                let _ = device.poll(wgpu::PollType::Wait {
-                    submission_index: None,  // Wait for all submissions
-                    timeout: None,  // Wait indefinitely
-                });
-            }
+            // GPU SYNC: For now, just do a simple non-blocking poll of all work
+            // This ensures any completed GPU work is processed without blocking
+            let _ = device.poll(wgpu::PollType::Poll);
 
             // Atomic swap: ready ↔ display
             let mut current = tb.state.load(Ordering::Acquire);
@@ -239,9 +228,10 @@ impl SurfaceRegistry {
 
             // GPU SYNC: Wait for all pending GPU work to complete before destroying textures
             // This prevents use-after-free and ensures all GPU commands finish
+            // Use a short timeout to avoid blocking forever if something goes wrong
             let _ = device.poll(wgpu::PollType::Wait {
                 submission_index: None,  // Wait for all submissions
-                timeout: None,  // Wait indefinitely
+                timeout: Some(std::time::Duration::from_secs(5)), // 5 second timeout
             });
 
             // Now safe to recreate textures - all GPU work is complete
