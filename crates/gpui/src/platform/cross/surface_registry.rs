@@ -18,10 +18,9 @@ struct TripleBuffer {
     textures: [wgpu::Texture; 3],
     views: [wgpu::TextureView; 3],
 
-    // Atomic buffer indices (0, 1, or 2)
-    rendering_idx: AtomicU8,  // Back buffer for external rendering
-    ready_idx: AtomicU8,      // Mailbox buffer - latest complete frame
-    display_idx: AtomicU8,    // Front buffer for compositor
+    // Packed state: 2 bits each for rendering/ready/display indices.
+    // layout: [display(2-bit) | ready(2-bit) | rendering(2-bit)]
+    state: AtomicU8,
 
     // Redraw coalescing: prevents flooding compositor with thousands of requests/sec
     redraw_pending: std::sync::atomic::AtomicBool,
@@ -29,6 +28,23 @@ struct TripleBuffer {
     width: u32,
     height: u32,
     format: wgpu::TextureFormat,
+}
+
+impl TripleBuffer {
+    #[inline]
+    fn pack_state(rendering: u8, ready: u8, display: u8) -> u8 {
+        debug_assert!(rendering < 3 && ready < 3 && display < 3);
+        debug_assert!(rendering != ready && ready != display && display != rendering);
+        (display << 4) | (ready << 2) | rendering
+    }
+
+    #[inline]
+    fn unpack_state(state: u8) -> (u8, u8, u8) {
+        let rendering = state & 0x03;
+        let ready = (state >> 2) & 0x03;
+        let display = (state >> 4) & 0x03;
+        (rendering, ready, display)
+    }
 }
 
 /// Thread-safe registry of all active WGPU surfaces.
@@ -68,10 +84,20 @@ impl SurfaceRegistry {
     /// Returns immediately without blocking.
     pub fn swap_rendering_ready(&self, id: SurfaceId) {
         if let Some(tb) = self.surfaces.lock().unwrap().get(&id) {
-            // Atomically swap: rendering becomes ready, old ready becomes rendering
-            let old_rendering = tb.rendering_idx.load(Ordering::Relaxed);
-            let old_ready = tb.ready_idx.swap(old_rendering, Ordering::Relaxed);
-            tb.rendering_idx.store(old_ready, Ordering::Relaxed);
+            let mut current = tb.state.load(Ordering::Acquire);
+            loop {
+                let (rendering, ready, display) = TripleBuffer::unpack_state(current);
+                let next = TripleBuffer::pack_state(ready, rendering, display);
+                match tb.state.compare_exchange(
+                    current,
+                    next,
+                    Ordering::AcqRel,
+                    Ordering::Acquire,
+                ) {
+                    Ok(_) => break,
+                    Err(updated) => current = updated,
+                }
+            }
         }
     }
 
@@ -83,10 +109,20 @@ impl SurfaceRegistry {
     /// Returns immediately without blocking.
     pub fn swap_ready_display(&self, id: SurfaceId) {
         if let Some(tb) = self.surfaces.lock().unwrap().get(&id) {
-            // Atomically swap: ready becomes display, old display becomes ready
-            let old_ready = tb.ready_idx.load(Ordering::Relaxed);
-            let old_display = tb.display_idx.swap(old_ready, Ordering::Relaxed);
-            tb.ready_idx.store(old_display, Ordering::Relaxed);
+            let mut current = tb.state.load(Ordering::Acquire);
+            loop {
+                let (rendering, ready, display) = TripleBuffer::unpack_state(current);
+                let next = TripleBuffer::pack_state(rendering, display, ready);
+                match tb.state.compare_exchange(
+                    current,
+                    next,
+                    Ordering::AcqRel,
+                    Ordering::Acquire,
+                ) {
+                    Ok(_) => break,
+                    Err(updated) => current = updated,
+                }
+            }
         }
     }
 
@@ -94,8 +130,8 @@ impl SurfaceRegistry {
     pub fn back_view(&self, id: SurfaceId) -> Option<wgpu::TextureView> {
         let surfaces = self.surfaces.lock().unwrap();
         surfaces.get(&id).map(|tb| {
-            let idx = tb.rendering_idx.load(Ordering::Relaxed) as usize;
-            tb.views[idx].clone()
+            let (rendering, _, _) = TripleBuffer::unpack_state(tb.state.load(Ordering::Acquire));
+            tb.views[rendering as usize].clone()
         })
     }
 
@@ -103,8 +139,8 @@ impl SurfaceRegistry {
     pub fn front_view(&self, id: SurfaceId) -> Option<wgpu::TextureView> {
         let surfaces = self.surfaces.lock().unwrap();
         surfaces.get(&id).map(|tb| {
-            let idx = tb.display_idx.load(Ordering::Relaxed) as usize;
-            tb.views[idx].clone()
+            let (_, _, display) = TripleBuffer::unpack_state(tb.state.load(Ordering::Acquire));
+            tb.views[display as usize].clone()
         })
     }
 
@@ -117,8 +153,8 @@ impl SurfaceRegistry {
     ) -> Option<(wgpu::TextureView, (u32, u32))> {
         let surfaces = self.surfaces.lock().unwrap();
         surfaces.get(&id).map(|tb| {
-            let idx = tb.rendering_idx.load(Ordering::Relaxed) as usize;
-            (tb.views[idx].clone(), (tb.width, tb.height))
+            let (rendering, _, _) = TripleBuffer::unpack_state(tb.state.load(Ordering::Acquire));
+            (tb.views[rendering as usize].clone(), (tb.width, tb.height))
         })
     }
 
@@ -231,9 +267,7 @@ impl SurfaceRegistry {
         TripleBuffer {
             textures: [tex0, tex1, tex2],
             views: [view0, view1, view2],
-            rendering_idx: AtomicU8::new(0),  // External thread renders to buffer 0
-            ready_idx: AtomicU8::new(1),      // Buffer 1 is the mailbox
-            display_idx: AtomicU8::new(2),    // Compositor displays buffer 2
+            state: AtomicU8::new(TripleBuffer::pack_state(0, 1, 2)),
             redraw_pending: std::sync::atomic::AtomicBool::new(false),
             width: w,
             height: h,
@@ -241,3 +275,4 @@ impl SurfaceRegistry {
         }
     }
 }
+
