@@ -23,6 +23,9 @@ struct TripleBuffer {
     ready_idx: AtomicU8,      // Mailbox buffer - latest complete frame
     display_idx: AtomicU8,    // Front buffer for compositor
 
+    // Redraw coalescing: prevents flooding compositor with thousands of requests/sec
+    redraw_pending: std::sync::atomic::AtomicBool,
+
     width: u32,
     height: u32,
     format: wgpu::TextureFormat,
@@ -148,6 +151,24 @@ impl SurfaceRegistry {
         self.surfaces.lock().unwrap().remove(&id);
     }
 
+    /// Set the redraw pending flag, returning the previous value.
+    /// Used by present() to coalesce multiple redraw requests.
+    pub fn set_redraw_pending(&self, id: SurfaceId) -> bool {
+        if let Some(tb) = self.surfaces.lock().unwrap().get(&id) {
+            tb.redraw_pending.swap(true, Ordering::Relaxed)
+        } else {
+            false
+        }
+    }
+
+    /// Clear the redraw pending flag.
+    /// Called by the compositor after consuming a frame.
+    pub fn clear_redraw_pending(&self, id: SurfaceId) {
+        if let Some(tb) = self.surfaces.lock().unwrap().get(&id) {
+            tb.redraw_pending.store(false, Ordering::Relaxed);
+        }
+    }
+
     fn create_triple_buffer(
         device: &wgpu::Device,
         width: u32,
@@ -191,6 +212,7 @@ impl SurfaceRegistry {
             rendering_idx: AtomicU8::new(0),  // External thread renders to buffer 0
             ready_idx: AtomicU8::new(1),      // Buffer 1 is the mailbox
             display_idx: AtomicU8::new(2),    // Compositor displays buffer 2
+            redraw_pending: std::sync::atomic::AtomicBool::new(false),
             width: w,
             height: h,
             format,

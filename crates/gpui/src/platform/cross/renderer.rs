@@ -1717,6 +1717,11 @@ impl WgpuRenderer {
                                     // The bind_group holds a reference to it
                                     surface_views.push(view);
 
+                                    // Clear redraw pending AFTER we're done with the view
+                                    // This prevents the external thread from triggering another compositor
+                                    // pass while we're still using this view
+                                    self.context.surface_registry.clear_redraw_pending(*surface_id);
+
                                     seen_surfaces.push(*surface_id);
                                 }
                             }
