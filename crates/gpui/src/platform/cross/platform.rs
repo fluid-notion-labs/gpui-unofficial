@@ -1089,12 +1089,16 @@ fn winit_key_to_keystroke(
 /// this function is never compiled in non-macOS builds).
 #[cfg(target_os = "macos")]
 fn set_macos_dock_icon(icon: &crate::WindowIcon) {
-    use image::{ImageBuffer, Rgba};
+    use image::{ImageBuffer, Rgba, imageops};
     use objc2::ClassType;
     use objc2_app_kit::{NSApplication, NSImage};
     use objc2_foundation::{MainThreadMarker, NSData};
 
-    // Re-encode the raw RGBA pixels as PNG so NSImage can parse them.
+    // macOS Dock icons are capped at 512×512 (1024×1024 @2×).
+    // If we hand NSImage a larger image it reports a bigger "natural size"
+    // and the Dock renders the tile bigger than every other app icon.
+    const MAX_DOCK_ICON_PX: u32 = 512;
+
     let Some(buf) = ImageBuffer::<Rgba<u8>, _>::from_raw(
         icon.width,
         icon.height,
@@ -1103,6 +1107,14 @@ fn set_macos_dock_icon(icon: &crate::WindowIcon) {
         log::warn!("set_macos_dock_icon: icon dimensions don't match pixel buffer");
         return;
     };
+
+    // Downscale only if the image is larger than the Dock cap.
+    let buf = if icon.width > MAX_DOCK_ICON_PX || icon.height > MAX_DOCK_ICON_PX {
+        imageops::resize(&buf, MAX_DOCK_ICON_PX, MAX_DOCK_ICON_PX, imageops::FilterType::Lanczos3)
+    } else {
+        buf
+    };
+
     let mut png: Vec<u8> = Vec::new();
     if buf
         .write_to(
