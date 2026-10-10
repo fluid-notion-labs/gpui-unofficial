@@ -142,8 +142,11 @@ impl SurfaceRegistry {
     /// sending duplicate events while one is already queued.
     pub fn set_present_pending(&self, id: SurfaceId) -> bool {
         if let Some(db) = self.surfaces.lock().unwrap().get(&id) {
-            db.present_pending.swap(true, std::sync::atomic::Ordering::Relaxed)
+            let was_pending = db.present_pending.swap(true, std::sync::atomic::Ordering::Relaxed);
+            log::trace!("[surface_id={:?}] set_present_pending: was={}, now=true", id, was_pending);
+            was_pending
         } else {
+            log::warn!("[surface_id={:?}] set_present_pending: surface not found!", id);
             false
         }
     }
@@ -160,8 +163,12 @@ impl SurfaceRegistry {
     /// Clear the pending flag, normally invoked when the renderer consumes
     /// the next frame (in `paint_wgpu_surface`).
     pub fn clear_present_pending(&self, id: SurfaceId) {
+        log::debug!("[surface_id={:?}] clear_present_pending: called by renderer", id);
         if let Some(db) = self.surfaces.lock().unwrap().get(&id) {
             db.present_pending.store(false, std::sync::atomic::Ordering::Relaxed);
+            log::debug!("[surface_id={:?}] clear_present_pending: flag cleared", id);
+        } else {
+            log::warn!("[surface_id={:?}] clear_present_pending: surface not found!", id);
         }
     }
 

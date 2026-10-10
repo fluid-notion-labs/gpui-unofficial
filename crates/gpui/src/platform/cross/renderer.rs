@@ -1285,6 +1285,7 @@ impl WgpuRenderer {
     }
 
     pub fn draw(&self, scene: &Scene) {
+        log::debug!("Renderer::draw: starting frame");
         let mut command_encoder =
             self.context
                 .device
@@ -1293,10 +1294,15 @@ impl WgpuRenderer {
                 });
 
         self.atlas.before_frame(&mut command_encoder);
+        log::trace!("Renderer::draw: atlas.before_frame complete");
 
         // keep track of which surface ids we rendered this frame
         let mut seen_surfaces: Vec<crate::platform::cross::surface_registry::SurfaceId> =
             Vec::new();
+
+        // CRITICAL: Keep surface views alive until after the render pass ends
+        // The bind groups reference these views, so they must not be dropped early
+        let mut surface_views: Vec<wgpu::TextureView> = Vec::new();
 
         let color_adjustments = ColorAdjustments {
             gamma_ratios: self.rendering_parameters.gamma_ratios,
@@ -1394,16 +1400,21 @@ impl WgpuRenderer {
                                 "Skipping frame: failed to acquire swap chain texture after reconfigure: {:?}",
                                 e
                             );
+                            // CRITICAL: Clear present_pending for all WGPU surfaces so their
+                            // render threads don't block forever
+                            self.clear_wgpu_surface_pending_flags(scene);
                             return;
                         }
                     }
                 }
                 Err(wgpu::SurfaceError::Timeout) => {
                     log::warn!("Skipping frame: swap chain acquire timed out");
+                    self.clear_wgpu_surface_pending_flags(scene);
                     return;
                 }
                 Err(wgpu::SurfaceError::OutOfMemory) => {
                     log::warn!("Skipping frame: out of memory");
+                    self.clear_wgpu_surface_pending_flags(scene);
                     return;
                 }
             }
@@ -1625,16 +1636,14 @@ impl WgpuRenderer {
                         underlines_first_instance += count;
                     }
                     PrimitiveBatch::Surfaces(surfaces) => {
+                        log::debug!("Renderer: processing {} surface(s)", surfaces.len());
                         for surface in surfaces {
                             if let crate::SurfaceContent::Wgpu(surface_id) = &surface.content {
+                                log::debug!("[surface_id={:?}] Renderer: processing WGPU surface", surface_id);
                                 if let Some(view) =
                                     self.context.surface_registry.front_view(*surface_id)
                                 {
-                                    // consuming the front view means the frame has been
-                                    // queued for compositing, so clear the pending flag
-                                    self.context
-                                        .surface_registry
-                                        .clear_present_pending(*surface_id);
+                                    log::debug!("[surface_id={:?}] Renderer: got front_view", surface_id);
 
                                     let params = SurfaceParams {
                                         bounds: Bounds {
@@ -1705,6 +1714,18 @@ impl WgpuRenderer {
                                     pass.set_bind_group(1, &surface_bind_group, &[]);
                                     pass.draw(0..4, 0..1);
 
+                                    // CRITICAL: Keep view alive until after render pass ends
+                                    // The bind_group holds a reference to it
+                                    surface_views.push(view);
+
+                                    // CRITICAL: Clear present_pending AFTER we've issued the draw
+                                    // so the external render thread doesn't swap buffers while
+                                    // we're still using the view
+                                    log::debug!("[surface_id={:?}] Renderer: draw issued, clearing present_pending", surface_id);
+                                    self.context
+                                        .surface_registry
+                                        .clear_present_pending(*surface_id);
+
                                     seen_surfaces.push(*surface_id);
                                 }
                             }
@@ -1716,9 +1737,11 @@ impl WgpuRenderer {
             }
         }
 
+        log::debug!("Renderer::draw: submitting command buffer");
         self.context.queue.submit(Some(command_encoder.finish()));
-
+        log::debug!("Renderer::draw: presenting surface");
         surface_texture.present();
+        log::debug!("Renderer::draw: frame complete");
     }
 
     pub fn update_drawable_size(&mut self, size: geometry::Size<DevicePixels>) {
@@ -1758,6 +1781,22 @@ impl WgpuRenderer {
         geometry::Size {
             width: DevicePixels(self.surface_configuration.width as i32),
             height: DevicePixels(self.surface_configuration.height as i32),
+        }
+    }
+
+    /// Clear the present_pending flag for all WGPU surfaces in the scene.
+    /// This is called when we skip a frame so that external render threads
+    /// don't block forever waiting for the compositor.
+    fn clear_wgpu_surface_pending_flags(&self, scene: &Scene) {
+        for batch in scene.batches() {
+            if let PrimitiveBatch::Surfaces(surfaces) = batch {
+                for surface in surfaces {
+                    if let crate::SurfaceContent::Wgpu(surface_id) = &surface.content {
+                        log::debug!("[surface_id={:?}] Clearing present_pending due to skipped frame", surface_id);
+                        self.context.surface_registry.clear_present_pending(*surface_id);
+                    }
+                }
+            }
         }
     }
 }
