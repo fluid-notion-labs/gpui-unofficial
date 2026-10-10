@@ -123,12 +123,23 @@ impl SurfaceRegistry {
     }
 
     /// Resize all three buffers, creating new textures.
+    ///
+    /// SAFETY: Skips resize if a compositor pass is pending to avoid invalidating
+    /// views currently in use. The element will retry resize on next frame.
     pub fn resize(&self, device: &wgpu::Device, id: SurfaceId, width: u32, height: u32) {
         let mut surfaces = self.surfaces.lock().unwrap();
         if let Some(tb) = surfaces.get_mut(&id) {
             if tb.width == width && tb.height == height {
                 return;
             }
+
+            // CRITICAL: Don't resize while compositor is rendering this surface!
+            // If redraw_pending is true, compositor is using the buffers.
+            // Skip resize - the element will retry on next frame.
+            if tb.redraw_pending.load(Ordering::Relaxed) {
+                return;
+            }
+
             let new_tb = Self::create_triple_buffer(device, width, height, tb.format);
             *tb = new_tb;
         }
