@@ -1624,102 +1624,85 @@ impl WgpuRenderer {
                     PrimitiveBatch::Surfaces(surfaces) => {
                         for surface in surfaces {
                             if let crate::SurfaceContent::Wgpu(surface_id) = &surface.content {
-                                if let Some(idx) =
-                                    self.context.surface_registry.front_index(*surface_id)
+                                if let Some(view) =
+                                    self.context.surface_registry.front_view(*surface_id)
                                 {
-                                    if self
-                                        .context
+                                    // consuming the front view means the frame has been
+                                    // queued for compositing, so clear the pending flag
+                                    self.context
                                         .surface_registry
-                                        .view_at(*surface_id, idx)
-                                        .is_some()
-                                    {
-                                        // consuming the front view means the frame has been
-                                        // queued for compositing, so clear the pending flag
-                                        self.context
-                                            .surface_registry
-                                            .clear_present_pending(*surface_id);
+                                        .clear_present_pending(*surface_id);
 
-                                        let params = SurfaceParams {
-                                            bounds: Bounds {
-                                                origin: [
-                                                    surface.bounds.origin.x.0,
-                                                    surface.bounds.origin.y.0,
-                                                ],
-                                                size: [
-                                                    surface.bounds.size.width.0,
-                                                    surface.bounds.size.height.0,
-                                                ],
-                                            },
-                                            content_mask: Bounds {
-                                                origin: [
-                                                    surface.content_mask.bounds.origin.x.0,
-                                                    surface.content_mask.bounds.origin.y.0,
-                                                ],
-                                                size: [
-                                                    surface.content_mask.bounds.size.width.0,
-                                                    surface.content_mask.bounds.size.height.0,
-                                                ],
-                                            },
-                                        };
+                                    let params = SurfaceParams {
+                                        bounds: Bounds {
+                                            origin: [
+                                                surface.bounds.origin.x.0,
+                                                surface.bounds.origin.y.0,
+                                            ],
+                                            size: [
+                                                surface.bounds.size.width.0,
+                                                surface.bounds.size.height.0,
+                                            ],
+                                        },
+                                        content_mask: Bounds {
+                                            origin: [
+                                                surface.content_mask.bounds.origin.x.0,
+                                                surface.content_mask.bounds.origin.y.0,
+                                            ],
+                                            size: [
+                                                surface.content_mask.bounds.size.width.0,
+                                                surface.content_mask.bounds.size.height.0,
+                                            ],
+                                        },
+                                    };
 
-                                        self.context.queue.write_buffer(
-                                            &self.surface_params_buffer,
-                                            0,
-                                            bytemuck::bytes_of(&params),
-                                        );
+                                    self.context.queue.write_buffer(
+                                        &self.surface_params_buffer,
+                                        0,
+                                        bytemuck::bytes_of(&params),
+                                    );
 
-                                        // Create bind group for the current front buffer
-                                        let view = self
-                                            .context
-                                            .surface_registry
-                                            .view_at(*surface_id, idx)
-                                            .unwrap();
-                                        let surface_bind_group = self.context
-                                            .device
-                                            .create_bind_group(&wgpu::BindGroupDescriptor {
-                                                label: Some("surface_bind_group"),
-                                                layout: &self.pipelines.surfaces_bind_group_layout,
-                                                entries: &[
-                                                    wgpu::BindGroupEntry {
-                                                        binding: 0,
-                                                        resource:
-                                                            wgpu::BindingResource::Buffer(
-                                                                wgpu::BufferBinding {
-                                                                    buffer: &self
-                                                                        .surface_params_buffer,
-                                                                    offset: 0,
-                                                                    size: None,
-                                                                },
-                                                            ),
-                                                    },
-                                                    wgpu::BindGroupEntry {
-                                                        binding: 1,
-                                                        resource:
-                                                            wgpu::BindingResource::TextureView(
-                                                                &view,
-                                                            ),
-                                                    },
-                                                    wgpu::BindGroupEntry {
-                                                        binding: 2,
-                                                        resource:
-                                                            wgpu::BindingResource::Sampler(
-                                                                &self.surface_sampler,
-                                                            ),
-                                                    },
-                                                ],
-                                            });
+                                    let surface_bind_group = self.context
+                                        .device
+                                        .create_bind_group(&wgpu::BindGroupDescriptor {
+                                            label: Some("surface_bind_group"),
+                                            layout: &self.pipelines.surfaces_bind_group_layout,
+                                            entries: &[
+                                                wgpu::BindGroupEntry {
+                                                    binding: 0,
+                                                    resource: wgpu::BindingResource::Buffer(
+                                                        wgpu::BufferBinding {
+                                                            buffer: &self.surface_params_buffer,
+                                                            offset: 0,
+                                                            size: None,
+                                                        },
+                                                    ),
+                                                },
+                                                wgpu::BindGroupEntry {
+                                                    binding: 1,
+                                                    resource: wgpu::BindingResource::TextureView(
+                                                        &view,
+                                                    ),
+                                                },
+                                                wgpu::BindGroupEntry {
+                                                    binding: 2,
+                                                    resource: wgpu::BindingResource::Sampler(
+                                                        &self.surface_sampler,
+                                                    ),
+                                                },
+                                            ],
+                                        });
 
-                                        pass.set_pipeline(&self.pipelines.surfaces_pipeline);
-                                        pass.set_bind_group(
-                                            0,
-                                            &self.pipelines.globals_bind_group,
-                                            &[],
-                                        );
-                                        pass.set_bind_group(1, &surface_bind_group, &[]);
-                                        pass.draw(0..4, 0..1);
+                                    pass.set_pipeline(&self.pipelines.surfaces_pipeline);
+                                    pass.set_bind_group(
+                                        0,
+                                        &self.pipelines.globals_bind_group,
+                                        &[],
+                                    );
+                                    pass.set_bind_group(1, &surface_bind_group, &[]);
+                                    pass.draw(0..4, 0..1);
 
-                                        seen_surfaces.push(*surface_id);
-                                    }
+                                    seen_surfaces.push(*surface_id);
                                 }
                             }
                         }
