@@ -1,11 +1,16 @@
+use std::collections::HashMap;
 use std::mem::ManuallyDrop;
-use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 
 use crate::{
     AtlasTextureId, AtlasTile, DevicePixels, GpuSpecs, Hsla, LinearColorStop, MonochromeSprite,
-    PlatformAtlas, PrimitiveBatch, Quad, ScaledPixels, Scene, TransformationMatrix, color,
-    geometry,
-    platform::cross::{atlas::WgpuAtlas, render_context::WgpuContext},
+    PlatformAtlas, Pixels, PrimitiveBatch, Quad, ScaledPixels, Scene, TransformationMatrix,
+    color, geometry,
+    platform::cross::{
+        atlas::WgpuAtlas, render_context::WgpuContext,
+        surface_registry::SurfaceId,
+    },
 };
 
 const fn map_attributes<const N: usize>(
@@ -1148,8 +1153,16 @@ impl RenderingParameters {
     }
 }
 
-use std::collections::HashMap;
-use std::sync::Mutex;
+/// Cached bounds information for fast surface blitting
+#[derive(Clone, Debug)]
+struct SurfaceBoundsEntry {
+    /// Screen-space bounds where the surface should be rendered
+    screen_bounds: geometry::Bounds<Pixels>,
+    /// Content mask for clipping
+    content_mask: geometry::Bounds<Pixels>,
+    /// Layout version when these bounds were computed (for staleness detection)
+    layout_version: u64,
+}
 
 pub struct WgpuRenderer {
     context: Arc<WgpuContext>,
@@ -1165,6 +1178,16 @@ pub struct WgpuRenderer {
     // cache bind groups for each double-buffered surface (index 0/1)
     surface_bind_groups:
         Mutex<HashMap<crate::platform::cross::surface_registry::SurfaceId, [wgpu::BindGroup; 2]>>,
+
+    // Persistent framebuffer for browser-canvas-style blitting
+    persistent_framebuffer: Option<wgpu::Texture>,
+    persistent_framebuffer_view: Option<wgpu::TextureView>,
+
+    // Bounds cache for fast surface blitting without compositor
+    surface_bounds_cache: Arc<Mutex<HashMap<SurfaceId, SurfaceBoundsEntry>>>,
+
+    // Layout version counter (incremented when compositor runs)
+    layout_version: Arc<AtomicU64>,
 }
 
 impl WgpuRenderer {
@@ -1270,6 +1293,25 @@ impl WgpuRenderer {
         // Configure the surface for presentation before the first draw call.
         surface.configure(&context.device, &surface_configuration);
 
+        // Create persistent framebuffer for browser-canvas-style blitting
+        let persistent_framebuffer = context.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("persistent_framebuffer"),
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+
+        let persistent_framebuffer_view =
+            persistent_framebuffer.create_view(&wgpu::TextureViewDescriptor::default());
+
         Ok(Self {
             context: context.clone(),
             surface: ManuallyDrop::new(surface),
@@ -1281,11 +1323,16 @@ impl WgpuRenderer {
             pipelines,
             rendering_parameters: RenderingParameters::from_env(),
             surface_bind_groups: Mutex::new(HashMap::new()),
+            persistent_framebuffer: Some(persistent_framebuffer),
+            persistent_framebuffer_view: Some(persistent_framebuffer_view),
+            surface_bounds_cache: Arc::new(Mutex::new(HashMap::new())),
+            layout_version: Arc::new(AtomicU64::new(0)),
         })
     }
 
     pub fn draw(&self, scene: &Scene) {
         log::debug!("Renderer::draw: starting frame");
+
         let mut command_encoder =
             self.context
                 .device
@@ -1415,6 +1462,11 @@ impl WgpuRenderer {
             }
         };
 
+        // Increment layout version - all bounds caches are now fresh
+        // IMPORTANT: Only increment after successful swapchain acquisition
+        // If we skip the frame, bounds remain valid
+        self.layout_version.fetch_add(1, Ordering::Release);
+
         let quads_bind_group = self
             .context
             .device
@@ -1496,6 +1548,7 @@ impl WgpuRenderer {
                 });
 
         {
+            // Render to swapchain directly for now (TODO: render to framebuffer, then blit)
             let mut pass = command_encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("main"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -1667,6 +1720,35 @@ impl WgpuRenderer {
                                         },
                                     };
 
+                                    // Cache bounds for fast surface blitting
+                                    // Surface bounds are in ScaledPixels (f32), store as Pixels for caching
+                                    self.surface_bounds_cache.lock().unwrap().insert(
+                                        *surface_id,
+                                        SurfaceBoundsEntry {
+                                            screen_bounds: geometry::Bounds {
+                                                origin: geometry::Point {
+                                                    x: Pixels(surface.bounds.origin.x.0),
+                                                    y: Pixels(surface.bounds.origin.y.0),
+                                                },
+                                                size: geometry::Size {
+                                                    width: Pixels(surface.bounds.size.width.0),
+                                                    height: Pixels(surface.bounds.size.height.0),
+                                                },
+                                            },
+                                            content_mask: geometry::Bounds {
+                                                origin: geometry::Point {
+                                                    x: Pixels(surface.content_mask.bounds.origin.x.0),
+                                                    y: Pixels(surface.content_mask.bounds.origin.y.0),
+                                                },
+                                                size: geometry::Size {
+                                                    width: Pixels(surface.content_mask.bounds.size.width.0),
+                                                    height: Pixels(surface.content_mask.bounds.size.height.0),
+                                                },
+                                            },
+                                            layout_version: self.layout_version.load(Ordering::Acquire),
+                                        },
+                                    );
+
                                     self.context.queue.write_buffer(
                                         &self.surface_params_buffer,
                                         0,
@@ -1733,6 +1815,8 @@ impl WgpuRenderer {
             }
         }
 
+        // TODO: Blit persistent framebuffer to swapchain (needs proper pipeline)
+
         log::debug!("Renderer::draw: submitting command buffer");
         self.context.queue.submit(Some(command_encoder.finish()));
         log::debug!("Renderer::draw: presenting surface");
@@ -1740,11 +1824,209 @@ impl WgpuRenderer {
         log::debug!("Renderer::draw: frame complete");
     }
 
+    /// Fast path: blit a surface directly to persistent framebuffer WITHOUT running compositor
+    /// Returns true if successful, false if bounds cache miss (need full compositor)
+    pub fn blit_surface_direct(&self, surface_id: SurfaceId) -> bool {
+        log::debug!("[surface_id={:?}] Attempting fast blit", surface_id);
+
+        // 1. Check if we have cached bounds
+        let cache = self.surface_bounds_cache.lock().unwrap();
+        let Some(entry) = cache.get(&surface_id) else {
+            log::debug!(
+                "[surface_id={:?}] Fast blit failed: no cached bounds",
+                surface_id
+            );
+            return false; // No bounds, need compositor
+        };
+
+        // 2. Check if bounds are stale
+        if entry.layout_version != self.layout_version.load(Ordering::Acquire) {
+            log::debug!(
+                "[surface_id={:?}] Fast blit failed: stale bounds (layout version mismatch)",
+                surface_id
+            );
+            return false; // Layout changed, need compositor
+        };
+
+        let screen_bounds = entry.screen_bounds;
+        let content_mask = entry.content_mask;
+        drop(cache); // Release lock
+
+        // 3. Atomic buffer swap (lock-free)
+        self.context
+            .surface_registry
+            .swap_ready_display(surface_id);
+
+        // 4. Get surface texture view
+        let Some(view) = self.context.surface_registry.front_view(surface_id) else {
+            log::debug!(
+                "[surface_id={:?}] Fast blit failed: no front view",
+                surface_id
+            );
+            return false;
+        };
+
+        // 5. Blit surface → swapchain directly (TODO: blit to persistent framebuffer)
+        log::debug!(
+            "[surface_id={:?}] Fast blit: blitting to swapchain at bounds {:?}",
+            surface_id,
+            screen_bounds
+        );
+
+        // Acquire swapchain
+        let surface_texture = match self.surface.get_current_texture() {
+            Ok(t) => t,
+            Err(e) => {
+                log::warn!("Fast blit failed to acquire swapchain: {:?}", e);
+                return false;
+            }
+        };
+
+        let mut encoder = self
+            .context
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("fast_surface_blit"),
+            });
+
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("fast_surface_blit_pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &surface_texture
+                        .texture
+                        .create_view(&wgpu::TextureViewDescriptor::default()),
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load, // Preserve existing swapchain content
+                        store: wgpu::StoreOp::Store,
+                    },
+                    resolve_target: None,
+                    depth_slice: None,
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+
+            // Prepare surface params with cached bounds
+            let scale_factor = self.surface_configuration.width as f32
+                / self.surface_configuration.width as f32; // TODO: Get actual scale factor
+            let params = SurfaceParams {
+                bounds: Bounds {
+                    origin: [screen_bounds.origin.x.0, screen_bounds.origin.y.0],
+                    size: [screen_bounds.size.width.0, screen_bounds.size.height.0],
+                },
+                content_mask: Bounds {
+                    origin: [content_mask.origin.x.0, content_mask.origin.y.0],
+                    size: [content_mask.size.width.0, content_mask.size.height.0],
+                },
+            };
+
+            self.context.queue.write_buffer(
+                &self.surface_params_buffer,
+                0,
+                bytemuck::bytes_of(&params),
+            );
+
+            // Create bind group for this surface (must match surfaces.wgsl binding order)
+            let surface_bind_group = self
+                .context
+                .device
+                .create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("fast_blit_surface_bind_group"),
+                    layout: &self.pipelines.surfaces_bind_group_layout,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                                buffer: &self.surface_params_buffer,
+                                offset: 0,
+                                size: None,
+                            }),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: wgpu::BindingResource::TextureView(&view),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 2,
+                            resource: wgpu::BindingResource::Sampler(&self.surface_sampler),
+                        },
+                    ],
+                });
+
+            // Render surface quad using existing surfaces.wgsl shader
+            pass.set_pipeline(&self.pipelines.surfaces_pipeline);
+            pass.set_bind_group(0, &self.pipelines.globals_bind_group, &[]);
+            pass.set_bind_group(1, &surface_bind_group, &[]);
+            pass.draw(0..4, 0..1);
+        }
+
+        self.context.queue.submit(Some(encoder.finish()));
+        surface_texture.present();
+
+        // 6. Clear redraw flag (external thread can continue)
+        self.context
+            .surface_registry
+            .clear_redraw_pending(surface_id);
+
+        log::debug!("[surface_id={:?}] Fast blit succeeded", surface_id);
+        true // Success
+    }
+
+    /// Get list of surfaces that have pending redraws
+    pub fn get_pending_surfaces(&self) -> Option<Vec<SurfaceId>> {
+        let pending = self.context.surface_registry.get_pending_surfaces();
+        if pending.is_empty() {
+            None
+        } else {
+            Some(pending)
+        }
+    }
+
+    /// Present without running compositor (fast blit already updated swapchain)
+    pub fn present_framebuffer_only(&self) {
+        // NOTE: Fast blit already presented to swapchain, so this is a no-op
+        // When we implement persistent framebuffer properly, this will blit framebuffer → swapchain
+        log::debug!("Present framebuffer only (no compositor) - fast blit already presented");
+    }
+
     pub fn update_drawable_size(&mut self, size: geometry::Size<DevicePixels>) {
         self.surface_configuration.width = size.width.0 as u32;
         self.surface_configuration.height = size.height.0 as u32;
         self.surface
             .configure(&self.context.device, &self.surface_configuration);
+
+        // Recreate persistent framebuffer at new size
+        let persistent_framebuffer =
+            self.context
+                .device
+                .create_texture(&wgpu::TextureDescriptor {
+                    label: Some("persistent_framebuffer"),
+                    size: wgpu::Extent3d {
+                        width: self.surface_configuration.width,
+                        height: self.surface_configuration.height,
+                        depth_or_array_layers: 1,
+                    },
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format: self.surface_configuration.format,
+                    usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                        | wgpu::TextureUsages::TEXTURE_BINDING,
+                    view_formats: &[],
+                });
+
+        let persistent_framebuffer_view =
+            persistent_framebuffer.create_view(&wgpu::TextureViewDescriptor::default());
+
+        self.persistent_framebuffer = Some(persistent_framebuffer);
+        self.persistent_framebuffer_view = Some(persistent_framebuffer_view);
+
+        // Invalidate bounds cache - all surface bounds are now stale
+        self.layout_version.fetch_add(1, Ordering::Release);
+        self.surface_bounds_cache.lock().unwrap().clear();
     }
 
     pub fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {

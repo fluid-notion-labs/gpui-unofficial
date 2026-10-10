@@ -180,6 +180,17 @@ impl SurfaceRegistry {
         }
     }
 
+    /// Get all surfaces that have pending redraws.
+    /// Used by the fast blit path to check which surfaces need updating.
+    pub fn get_pending_surfaces(&self) -> Vec<SurfaceId> {
+        let surfaces = self.surfaces.lock().unwrap();
+        surfaces
+            .iter()
+            .filter(|(_, tb)| tb.redraw_pending.load(Ordering::Relaxed))
+            .map(|(id, _)| *id)
+            .collect()
+    }
+
     fn create_triple_buffer(
         device: &wgpu::Device,
         width: u32,

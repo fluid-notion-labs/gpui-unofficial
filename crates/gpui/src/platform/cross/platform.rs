@@ -576,11 +576,26 @@ impl winit::application::ApplicationHandler<CrossEvent> for AppState {
                     return;
                 }
 
+                // Try fast blit path for pending surfaces
+                let mut fast_blit_succeeded = false;
+                if let Some(renderer) = window.0.renderer.get() {
+                    let renderer_ref = renderer.borrow();
+                    // Get all pending surfaces from the registry
+                    if let Some(pending_surfaces) = renderer_ref.get_pending_surfaces() {
+                        for surface_id in pending_surfaces {
+                            if renderer_ref.blit_surface_direct(surface_id) {
+                                fast_blit_succeeded = true;
+                            }
+                        }
+                    }
+                }
+
                 window.0.state.callbacks.invoke_mut(
                     &window.0.state.callbacks.on_request_frame,
                     |cb| {
                         cb(crate::RequestFrameOptions {
-                            force_render: true,  // Force compositor to run when explicitly requested
+                            // Only force compositor if fast blit failed
+                            force_render: !fast_blit_succeeded,
                             require_presentation: true,
                         });
                     },
