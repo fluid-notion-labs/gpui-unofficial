@@ -102,7 +102,6 @@ impl PlatformTextSystem for CosmicTextSystem {
             state.font_ids_by_family_cache[&key].as_ref()
         };
 
-        // todo(linux) ideally we would make fontdb's `find_best_match` pub instead of using font-kit here
         let candidate_properties = candidates
             .iter()
             .map(|font_id| {
@@ -112,9 +111,8 @@ impl PlatformTextSystem for CosmicTextSystem {
             })
             .collect::<SmallVec<[_; 4]>>();
 
-        let ix =
-            font_kit::matching::find_best_match(&candidate_properties, &font_into_properties(font))
-                .context("requested font family contains no font matching the other parameters")?;
+        let ix = find_best_match(&candidate_properties, &font_into_properties(font))
+            .context("requested font family contains no font matching the other parameters")?;
 
         Ok(candidates[ix])
     }
@@ -560,6 +558,155 @@ fn font_into_properties(font: &crate::Font) -> font_kit::properties::Properties 
         weight: font_kit::properties::Weight(font.weight.0),
         stretch: Default::default(),
     }
+}
+
+/// CSS Fonts Level 3 § 5.2 best-match algorithm.
+/// Copied from font-kit's private `matching` module to avoid depending on the
+/// zed-font-kit fork which made that module public.
+/// https://drafts.csswg.org/css-fonts-3/#font-style-matching
+fn find_best_match(
+    candidates: &[font_kit::properties::Properties],
+    query: &font_kit::properties::Properties,
+) -> Result<usize> {
+    use font_kit::properties::{Stretch, Style, Weight};
+
+    let mut matching_set: Vec<usize> = (0..candidates.len()).collect();
+    if matching_set.is_empty() {
+        anyhow::bail!("no candidate fonts");
+    }
+
+    // Step 4a (`font-stretch`).
+    let matching_stretch = if matching_set
+        .iter()
+        .any(|&index| candidates[index].stretch == query.stretch)
+    {
+        query.stretch
+    } else if query.stretch <= Stretch::NORMAL {
+        match matching_set
+            .iter()
+            .filter(|&&index| candidates[index].stretch < query.stretch)
+            .min_by(|&&a, &&b| {
+                (query.stretch.0 - candidates[a].stretch.0)
+                    .total_cmp(&(query.stretch.0 - candidates[b].stretch.0))
+            }) {
+            Some(&matching_index) => candidates[matching_index].stretch,
+            None => {
+                let matching_index = *matching_set
+                    .iter()
+                    .min_by(|&&a, &&b| {
+                        (candidates[a].stretch.0 - query.stretch.0)
+                            .total_cmp(&(candidates[b].stretch.0 - query.stretch.0))
+                    })
+                    .expect("matching_set is non-empty");
+                candidates[matching_index].stretch
+            }
+        }
+    } else {
+        match matching_set
+            .iter()
+            .filter(|&&index| candidates[index].stretch > query.stretch)
+            .min_by(|&&a, &&b| {
+                (candidates[a].stretch.0 - query.stretch.0)
+                    .total_cmp(&(candidates[b].stretch.0 - query.stretch.0))
+            }) {
+            Some(&matching_index) => candidates[matching_index].stretch,
+            None => {
+                let matching_index = *matching_set
+                    .iter()
+                    .min_by(|&&a, &&b| {
+                        (query.stretch.0 - candidates[a].stretch.0)
+                            .total_cmp(&(query.stretch.0 - candidates[b].stretch.0))
+                    })
+                    .expect("matching_set is non-empty");
+                candidates[matching_index].stretch
+            }
+        }
+    };
+    matching_set.retain(|&index| candidates[index].stretch == matching_stretch);
+
+    // Step 4b (`font-style`).
+    let style_preference = match query.style {
+        Style::Italic => [Style::Italic, Style::Oblique, Style::Normal],
+        Style::Oblique => [Style::Oblique, Style::Italic, Style::Normal],
+        Style::Normal => [Style::Normal, Style::Oblique, Style::Italic],
+    };
+    let matching_style = *style_preference
+        .iter()
+        .find(|&query_style| {
+            matching_set
+                .iter()
+                .any(|&index| candidates[index].style == *query_style)
+        })
+        .expect("matching_set is non-empty");
+    matching_set.retain(|&index| candidates[index].style == matching_style);
+
+    // Step 4c (`font-weight`).
+    let matching_weight = if matching_set
+        .iter()
+        .any(|&index| candidates[index].weight == query.weight)
+    {
+        query.weight
+    } else if query.weight >= Weight(400.0)
+        && query.weight < Weight(450.0)
+        && matching_set
+            .iter()
+            .any(|&index| candidates[index].weight == Weight(500.0))
+    {
+        Weight(500.0)
+    } else if query.weight >= Weight(450.0)
+        && query.weight <= Weight(500.0)
+        && matching_set
+            .iter()
+            .any(|&index| candidates[index].weight == Weight(400.0))
+    {
+        Weight(400.0)
+    } else if query.weight <= Weight(500.0) {
+        match matching_set
+            .iter()
+            .filter(|&&index| candidates[index].weight <= query.weight)
+            .min_by(|&&a, &&b| {
+                (query.weight.0 - candidates[a].weight.0)
+                    .total_cmp(&(query.weight.0 - candidates[b].weight.0))
+            }) {
+            Some(&matching_index) => candidates[matching_index].weight,
+            None => {
+                let matching_index = *matching_set
+                    .iter()
+                    .min_by(|&&a, &&b| {
+                        (candidates[a].weight.0 - query.weight.0)
+                            .total_cmp(&(candidates[b].weight.0 - query.weight.0))
+                    })
+                    .expect("matching_set is non-empty");
+                candidates[matching_index].weight
+            }
+        }
+    } else {
+        match matching_set
+            .iter()
+            .filter(|&&index| candidates[index].weight >= query.weight)
+            .min_by(|&&a, &&b| {
+                (candidates[a].weight.0 - query.weight.0)
+                    .total_cmp(&(candidates[b].weight.0 - query.weight.0))
+            }) {
+            Some(&matching_index) => candidates[matching_index].weight,
+            None => {
+                let matching_index = *matching_set
+                    .iter()
+                    .min_by(|&&a, &&b| {
+                        (query.weight.0 - candidates[a].weight.0)
+                            .total_cmp(&(query.weight.0 - candidates[b].weight.0))
+                    })
+                    .expect("matching_set is non-empty");
+                candidates[matching_index].weight
+            }
+        }
+    };
+    matching_set.retain(|&index| candidates[index].weight == matching_weight);
+
+    matching_set
+        .into_iter()
+        .next()
+        .context("no matching font found")
 }
 
 fn face_info_into_properties(
