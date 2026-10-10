@@ -1689,8 +1689,15 @@ impl WgpuRenderer {
                             if let crate::SurfaceContent::Wgpu(surface_id) = &surface.content {
                                 log::debug!("[surface_id={:?}] Renderer: processing WGPU surface", surface_id);
 
-                                // Atomically swap ready ↔ display buffers to get latest frame
-                                self.context.surface_registry.swap_ready_display(*surface_id);
+                                // Atomically swap ready ↔ display buffers with GPU sync
+                                let swapped = self.context.surface_registry.swap_ready_display(
+                                    &self.context.device,
+                                    *surface_id
+                                );
+
+                                if swapped {
+                                    log::trace!("[surface_id={:?}] Swapped to new frame", surface_id);
+                                }
 
                                 if let Some(view) =
                                     self.context.surface_registry.front_view(*surface_id)
@@ -1852,10 +1859,14 @@ impl WgpuRenderer {
         let content_mask = entry.content_mask;
         drop(cache); // Release lock
 
-        // 3. Atomic buffer swap (lock-free)
-        self.context
+        // 3. Atomic buffer swap with GPU synchronization
+        let swapped = self.context
             .surface_registry
-            .swap_ready_display(surface_id);
+            .swap_ready_display(&self.context.device, surface_id);
+
+        if !swapped {
+            log::trace!("[surface_id={:?}] No new frame, reusing current display buffer", surface_id);
+        }
 
         // 4. Get surface texture view
         let Some(view) = self.context.surface_registry.front_view(surface_id) else {

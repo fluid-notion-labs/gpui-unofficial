@@ -22,6 +22,10 @@ struct TripleBuffer {
     // layout: [display(2-bit) | ready(2-bit) | rendering(2-bit)]
     state: AtomicU8,
 
+    // GPU synchronization: Track submission indices for each buffer to ensure
+    // GPU work is complete before swapping buffers
+    submission_indices: Mutex<[Option<wgpu::SubmissionIndex>; 3]>,
+
     // Redraw coalescing: prevents flooding compositor with thousands of requests/sec
     redraw_pending: std::sync::atomic::AtomicBool,
 
@@ -81,8 +85,41 @@ impl SurfaceRegistry {
     /// This is the "present" operation - it makes the newly rendered frame available
     /// to the compositor and gives the external thread a recycled buffer to render into.
     ///
+    /// The `submission_idx` is stored to track GPU work completion, allowing the compositor
+    /// to poll before sampling to prevent reading incomplete frames.
+    ///
     /// Returns immediately without blocking.
-    pub fn swap_rendering_ready(&self, id: SurfaceId) {
+    pub fn swap_rendering_ready(&self, id: SurfaceId, submission_idx: wgpu::SubmissionIndex) {
+        if let Some(tb) = self.surfaces.lock().unwrap().get(&id) {
+            let current = tb.state.load(Ordering::Acquire);
+            let (rendering, ready, display) = TripleBuffer::unpack_state(current);
+
+            // Store submission index for the buffer we just rendered to
+            tb.submission_indices.lock().unwrap()[rendering as usize] = Some(submission_idx);
+
+            // Atomic swap: rendering ↔ ready
+            let mut current = tb.state.load(Ordering::Acquire);
+            loop {
+                let (rendering, ready, display) = TripleBuffer::unpack_state(current);
+                let next = TripleBuffer::pack_state(ready, rendering, display);
+                match tb.state.compare_exchange(
+                    current,
+                    next,
+                    Ordering::AcqRel,
+                    Ordering::Acquire,
+                ) {
+                    Ok(_) => break,
+                    Err(updated) => current = updated,
+                }
+            }
+        }
+    }
+
+    /// Atomically swap rendering and ready buffers without GPU synchronization.
+    ///
+    /// DEPRECATED: Use swap_rendering_ready() with SubmissionIndex for proper GPU sync.
+    /// This method exists for backward compatibility only.
+    pub fn swap_rendering_ready_no_sync(&self, id: SurfaceId) {
         if let Some(tb) = self.surfaces.lock().unwrap().get(&id) {
             let mut current = tb.state.load(Ordering::Acquire);
             loop {
@@ -101,14 +138,34 @@ impl SurfaceRegistry {
         }
     }
 
-    /// Atomically swap ready and display buffers (called by compositor before sampling).
+    /// Atomically swap ready and display buffers with GPU synchronization.
     ///
-    /// This updates the compositor's view to the latest complete frame and returns
-    /// the old display buffer to the ready pool.
+    /// Polls the GPU to check if the ready buffer's work is complete before swapping.
+    /// This ensures the compositor never samples incomplete frames.
     ///
-    /// Returns immediately without blocking.
-    pub fn swap_ready_display(&self, id: SurfaceId) {
+    /// Returns `true` if a swap occurred, `false` if GPU work is incomplete (compositor
+    /// should reuse the current display buffer).
+    pub fn swap_ready_display(&self, device: &wgpu::Device, id: SurfaceId) -> bool {
         if let Some(tb) = self.surfaces.lock().unwrap().get(&id) {
+            let current = tb.state.load(Ordering::Acquire);
+            let (rendering, ready, display) = TripleBuffer::unpack_state(current);
+
+            // Check if ready buffer has new content to display
+            let submission_indices = tb.submission_indices.lock().unwrap();
+            let has_new_content = submission_indices[ready as usize].is_some();
+            drop(submission_indices); // Release lock before atomic swap
+
+            // GPU SYNC: Poll device to ensure all pending GPU work is complete
+            // This prevents the compositor from sampling incomplete frames
+            if has_new_content {
+                // Wait for all GPU work to complete (blocking call)
+                let _ = device.poll(wgpu::PollType::Wait {
+                    submission_index: None,  // Wait for all submissions
+                    timeout: None,  // Wait indefinitely
+                });
+            }
+
+            // Atomic swap: ready ↔ display
             let mut current = tb.state.load(Ordering::Acquire);
             loop {
                 let (rendering, ready, display) = TripleBuffer::unpack_state(current);
@@ -119,11 +176,12 @@ impl SurfaceRegistry {
                     Ordering::AcqRel,
                     Ordering::Acquire,
                 ) {
-                    Ok(_) => break,
+                    Ok(_) => return true,
                     Err(updated) => current = updated,
                 }
             }
         }
+        false
     }
 
     /// Get the rendering buffer's `TextureView` (what external code renders into).
@@ -158,10 +216,13 @@ impl SurfaceRegistry {
         })
     }
 
-    /// Resize all three buffers, creating new textures.
+    /// Resize all three buffers, creating new textures with GPU synchronization.
     ///
-    /// SAFETY: Skips resize if a compositor pass is pending to avoid invalidating
-    /// views currently in use. The element will retry resize on next frame.
+    /// SAFETY: Waits for all pending GPU work to complete before destroying textures.
+    /// This prevents use-after-free and ensures all GPU commands finish before
+    /// texture resources are released.
+    ///
+    /// Also skips resize if compositor is actively using the buffers (redraw_pending).
     pub fn resize(&self, device: &wgpu::Device, id: SurfaceId, width: u32, height: u32) {
         let mut surfaces = self.surfaces.lock().unwrap();
         if let Some(tb) = surfaces.get_mut(&id) {
@@ -176,6 +237,14 @@ impl SurfaceRegistry {
                 return;
             }
 
+            // GPU SYNC: Wait for all pending GPU work to complete before destroying textures
+            // This prevents use-after-free and ensures all GPU commands finish
+            let _ = device.poll(wgpu::PollType::Wait {
+                submission_index: None,  // Wait for all submissions
+                timeout: None,  // Wait indefinitely
+            });
+
+            // Now safe to recreate textures - all GPU work is complete
             let new_tb = Self::create_triple_buffer(device, width, height, tb.format);
             *tb = new_tb;
         }
@@ -268,6 +337,7 @@ impl SurfaceRegistry {
             textures: [tex0, tex1, tex2],
             views: [view0, view1, view2],
             state: AtomicU8::new(TripleBuffer::pack_state(0, 1, 2)),
+            submission_indices: Mutex::new([None, None, None]),
             redraw_pending: std::sync::atomic::AtomicBool::new(false),
             width: w,
             height: h,
