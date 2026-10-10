@@ -855,6 +855,9 @@ impl winit::application::ApplicationHandler<CrossEvent> for AppState {
                     }
                     winit::event::ElementState::Released => {
                         self.pressed_button = None;
+                        if mouse_button == MouseButton::Left {
+                            window.0.state.is_resizing.set(false);
+                        }
 
                         let platform_event = PlatformInput::MouseUp(MouseUpEvent {
                             button: mouse_button,
