@@ -255,28 +255,33 @@ impl WgpuAtlasState {
 
         let contents = padded_data.as_deref().unwrap_or(bytes);
 
-        // Work around driver issues in mapped-at-creation path (see helio/ship_flight repro).
-        // Using `queue.write_buffer` avoids `Buffer::get_mapped_range` in wgpu_core.
-        let unpadded_size = contents.len() as u64;
-        let align_mask = wgpu::COPY_BUFFER_ALIGNMENT - 1;
-        let padded_size = ((unpadded_size + align_mask) & !align_mask).max(wgpu::COPY_BUFFER_ALIGNMENT);
+        // Work around driver issues by using queue.write_texture directly
+        // instead of staging through a buffer (see helio/ship_flight repro).
+        let texture = &self.storage[texture_id];
 
-        let buffer = self.context.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("atlas_upload_buffer"),
-            size: padded_size,
-            usage: wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        self.context.queue.write_buffer(&buffer, 0, contents);
-
-        self.uploads.push(PendingUpload {
-            texture_id,
-            bounds,
-            buffer,
-            offset: 0,
-            padded_bytes_per_row: padded_bytes_per_row as u32,
-        })
+        self.context.queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &texture.raw,
+                mip_level: 0,
+                origin: wgpu::Origin3d {
+                    x: bounds.origin.x.into(),
+                    y: bounds.origin.y.into(),
+                    z: 0,
+                },
+                aspect: wgpu::TextureAspect::All,
+            },
+            contents,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(padded_bytes_per_row as u32),
+                rows_per_image: None,
+            },
+            wgpu::Extent3d {
+                width: bounds.size.width.into(),
+                height: bounds.size.height.into(),
+                depth_or_array_layers: 1,
+            },
+        )
     }
 
     fn flush_initializations(&mut self, _encoder: &mut wgpu::CommandEncoder) {
