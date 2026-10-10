@@ -490,6 +490,11 @@ impl winit::application::ApplicationHandler<CrossEvent> for AppState {
                     window.window().request_redraw();
                 }
             }
+            CrossEvent::CloseWindow(window_id) => {
+                // Programmatic close: remove from platform map so the winit
+                // window is dropped and the OS window actually disappears.
+                self.windows.remove(&window_id);
+            }
         }
 
         self.clear_active_context();

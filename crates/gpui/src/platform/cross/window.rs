@@ -130,6 +130,14 @@ impl CrossWindow {
             .get()
             .expect("winit_window should be initialized")
     }
+
+    /// Sends a `CloseWindow` event so the platform's `AppState.windows` map drops
+    /// its reference and the OS window is actually destroyed.
+    pub(crate) fn close_programmatically(&self) {
+        if let Some(w) = self.0.winit_window.get() {
+            let _ = self.0.event_loop_proxy.send_event(CrossEvent::CloseWindow(w.id()));
+        }
+    }
 }
 
 impl PlatformWindow for CrossWindow {
@@ -447,6 +455,10 @@ impl raw_window_handle::HasDisplayHandle for CrossWindow {
         &self,
     ) -> Result<raw_window_handle::DisplayHandle<'_>, raw_window_handle::HandleError> {
         self.window().display_handle()
+    }
+
+    fn close_programmatically(&self) {
+        CrossWindow::close_programmatically(self);
     }
 }
 
