@@ -12,6 +12,17 @@ use crate::{
     },
     point,
 };
+
+fn device_button_to_gpui(button: u32) -> Option<MouseButton> {
+    match button {
+        0 => Some(MouseButton::Left),
+        1 => Some(MouseButton::Right),
+        2 => Some(MouseButton::Middle),
+        3 => Some(MouseButton::Navigate(crate::NavigationDirection::Back)),
+        4 => Some(MouseButton::Navigate(crate::NavigationDirection::Forward)),
+        _ => None,
+    }
+}
 use anyhow::Result;
 use collections::FxHashMap;
 use std::{cell::Cell, rc::Rc, sync::Arc, time::Instant};
@@ -447,15 +458,46 @@ impl winit::application::ApplicationHandler<CrossEvent> for AppState {
         _device_id: winit::event::DeviceId,
         event: winit::event::DeviceEvent,
     ) {
-        if std::env::var_os("GPUI_DEBUG_MOUSE").is_some() {
-            match &event {
-                winit::event::DeviceEvent::Button { button, state } => {
+        if let winit::event::DeviceEvent::Button { button, state } = event {
+            if let Some(mouse_button) = device_button_to_gpui(button) {
+                if std::env::var_os("GPUI_DEBUG_MOUSE").is_some() {
                     eprintln!(
-                        "[WGPUI] DeviceEvent Button {:?} {:?} pressed_button={:?}",
-                        button, state, self.pressed_button
+                        "[WGPUI] DeviceEvent Button {} {:?} pressed_button={:?}",
+                        button,
+                        state,
+                        self.pressed_button
                     );
                 }
-                _ => {}
+
+                match state {
+                    winit::event::ElementState::Pressed => {
+                        self.pressed_button = Some(mouse_button);
+                    }
+                    winit::event::ElementState::Released => {
+                        if self.pressed_button == Some(mouse_button) {
+                            self.pressed_button = None;
+
+                            if let Some(window_id) = self.hovered_window_id.get() {
+                                if let Some(window) = self.windows.get(&window_id) {
+                                    let position = window.0.state.mouse_position.get();
+                                    let modifiers = self.current_modifiers;
+                                    let platform_event = PlatformInput::MouseUp(MouseUpEvent {
+                                        button: mouse_button,
+                                        position,
+                                        modifiers,
+                                        click_count: self.click_state.current_count,
+                                    });
+                                    window.0.state.callbacks.invoke_mut(
+                                        &window.0.state.callbacks.on_input,
+                                        |cb| {
+                                            cb(platform_event.clone());
+                                        },
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
     }
