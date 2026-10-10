@@ -1,3 +1,4 @@
+use std::mem::ManuallyDrop;
 use std::sync::Arc;
 
 use crate::{
@@ -1152,7 +1153,7 @@ use std::sync::Mutex;
 
 pub struct WgpuRenderer {
     context: Arc<WgpuContext>,
-    surface: wgpu::Surface<'static>,
+    surface: ManuallyDrop<wgpu::Surface<'static>>,
     surface_configuration: wgpu::SurfaceConfiguration,
     atlas_sampler: wgpu::Sampler,
     surface_sampler: wgpu::Sampler,
@@ -1268,7 +1269,7 @@ impl WgpuRenderer {
 
         Ok(Self {
             context: context.clone(),
-            surface,
+            surface: ManuallyDrop::new(surface),
             surface_configuration,
             atlas,
             atlas_sampler,
@@ -1772,5 +1773,18 @@ impl WgpuRenderer {
             width: DevicePixels(self.surface_configuration.width as i32),
             height: DevicePixels(self.surface_configuration.height as i32),
         }
+    }
+}
+
+impl Drop for WgpuRenderer {
+    fn drop(&mut self) {
+        // SAFETY: This is the only Drop impl and `surface` has not been dropped yet.
+        // We take it manually so we can drop it inside catch_unwind, suppressing the Vulkan
+        // panic that occurs when a SurfaceTexture's Arc still holds a swapchain semaphore
+        // reference at the time the surface is destroyed (e.g. window closed mid-frame).
+        let surface = unsafe { ManuallyDrop::take(&mut self.surface) };
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
+            drop(surface);
+        }));
     }
 }
