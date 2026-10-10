@@ -1400,21 +1400,16 @@ impl WgpuRenderer {
                                 "Skipping frame: failed to acquire swap chain texture after reconfigure: {:?}",
                                 e
                             );
-                            // CRITICAL: Clear present_pending for all WGPU surfaces so their
-                            // render threads don't block forever
-                            self.clear_wgpu_surface_pending_flags(scene);
                             return;
                         }
                     }
                 }
                 Err(wgpu::SurfaceError::Timeout) => {
                     log::warn!("Skipping frame: swap chain acquire timed out");
-                    self.clear_wgpu_surface_pending_flags(scene);
                     return;
                 }
                 Err(wgpu::SurfaceError::OutOfMemory) => {
                     log::warn!("Skipping frame: out of memory");
-                    self.clear_wgpu_surface_pending_flags(scene);
                     return;
                 }
             }
@@ -1640,10 +1635,14 @@ impl WgpuRenderer {
                         for surface in surfaces {
                             if let crate::SurfaceContent::Wgpu(surface_id) = &surface.content {
                                 log::debug!("[surface_id={:?}] Renderer: processing WGPU surface", surface_id);
+
+                                // Atomically swap ready ↔ display buffers to get latest frame
+                                self.context.surface_registry.swap_ready_display(*surface_id);
+
                                 if let Some(view) =
                                     self.context.surface_registry.front_view(*surface_id)
                                 {
-                                    log::debug!("[surface_id={:?}] Renderer: got front_view", surface_id);
+                                    log::debug!("[surface_id={:?}] Renderer: got display view after swap", surface_id);
 
                                     let params = SurfaceParams {
                                         bounds: Bounds {
@@ -1718,14 +1717,6 @@ impl WgpuRenderer {
                                     // The bind_group holds a reference to it
                                     surface_views.push(view);
 
-                                    // CRITICAL: Clear present_pending AFTER we've issued the draw
-                                    // so the external render thread doesn't swap buffers while
-                                    // we're still using the view
-                                    log::debug!("[surface_id={:?}] Renderer: draw issued, clearing present_pending", surface_id);
-                                    self.context
-                                        .surface_registry
-                                        .clear_present_pending(*surface_id);
-
                                     seen_surfaces.push(*surface_id);
                                 }
                             }
@@ -1784,21 +1775,6 @@ impl WgpuRenderer {
         }
     }
 
-    /// Clear the present_pending flag for all WGPU surfaces in the scene.
-    /// This is called when we skip a frame so that external render threads
-    /// don't block forever waiting for the compositor.
-    fn clear_wgpu_surface_pending_flags(&self, scene: &Scene) {
-        for batch in scene.batches() {
-            if let PrimitiveBatch::Surfaces(surfaces) = batch {
-                for surface in surfaces {
-                    if let crate::SurfaceContent::Wgpu(surface_id) = &surface.content {
-                        log::debug!("[surface_id={:?}] Clearing present_pending due to skipped frame", surface_id);
-                        self.context.surface_registry.clear_present_pending(*surface_id);
-                    }
-                }
-            }
-        }
-    }
 }
 
 impl Drop for WgpuRenderer {
