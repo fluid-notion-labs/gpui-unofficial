@@ -327,6 +327,18 @@ struct PathsData {
     s_sprite: wgpu::Sampler,
 }
 
+/// Per-vertex data uploaded to the GPU for path rendering.
+/// Layout must exactly match the `GpuPathVertex` struct in `paths.wgsl`.
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+struct GpuPathVertex {
+    xy_position:         [f32; 2],  // offset  0
+    st_position:         [f32; 2],  // offset  8
+    hsla:                [f32; 4],  // offset 16  (h, s, l, a)
+    content_mask_origin: [f32; 2],  // offset 32
+    content_mask_size:   [f32; 2],  // offset 40
+}                                   // stride  48
+
 struct UnderlinesData {
     globals: GlobalParams,
 }
@@ -584,6 +596,7 @@ struct WgpuPipelines {
     mono_sprites_bind_group_layout: wgpu::BindGroupLayout,
     poly_sprites_bind_group_layout: wgpu::BindGroupLayout,
     surfaces_bind_group_layout: wgpu::BindGroupLayout,
+    paths_bind_group_layout: wgpu::BindGroupLayout,
 
     globals_bind_group: wgpu::BindGroup,
     color_adjustments_bind_group: wgpu::BindGroup,
@@ -594,6 +607,7 @@ struct WgpuPipelines {
     mono_sprites_pipeline: wgpu::RenderPipeline,
     poly_sprites_pipeline: wgpu::RenderPipeline,
     surfaces_pipeline: wgpu::RenderPipeline,
+    paths_pipeline: wgpu::RenderPipeline,
 }
 
 impl WgpuPipelines {
@@ -939,6 +953,44 @@ impl WgpuPipelines {
                     }],
                 });
 
+        // ---- Paths pipeline ------------------------------------------------
+        let paths_shader = context
+            .device
+            .create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("paths_shader"),
+                source: wgpu::ShaderSource::Wgsl(include_str!("shaders/paths.wgsl").into()),
+            });
+
+        let paths_bind_group_layout =
+            context
+                .device
+                .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                    label: Some("paths_bind_group_layout"),
+                    entries: &[wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::VERTEX,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    }],
+                });
+
+        let paths_pipeline_layout =
+            context
+                .device
+                .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                    label: Some("paths_pipeline_layout"),
+                    bind_group_layouts: &[
+                        Some(&globals_bind_group_layout),
+                        Some(&paths_bind_group_layout),
+                    ],
+                    immediate_size: 0,
+                });
+        // --------------------------------------------------------------------
+
         Self {
             color_targets: color_targets.to_vec(),
 
@@ -948,6 +1000,7 @@ impl WgpuPipelines {
             mono_sprites_bind_group_layout,
             sprites_bind_group_layout,
             poly_sprites_bind_group_layout,
+            paths_bind_group_layout,
 
             globals_bind_group,
             color_adjustments_bind_group,
@@ -1111,6 +1164,33 @@ impl WgpuPipelines {
                         targets: color_targets,
                     }),
                     multisample: wgpu::MultisampleState::default(),
+                    multiview_mask: None,
+                    cache: None,
+                },
+            ),
+
+            paths_pipeline: context.device.create_render_pipeline(
+                &wgpu::RenderPipelineDescriptor {
+                    label: Some("paths"),
+                    layout: Some(&paths_pipeline_layout),
+                    vertex: wgpu::VertexState {
+                        module: &paths_shader,
+                        entry_point: Some("vs_path"),
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                        buffers: &[],
+                    },
+                    primitive: wgpu::PrimitiveState {
+                        topology: wgpu::PrimitiveTopology::TriangleList,
+                        ..Default::default()
+                    },
+                    depth_stencil: None,
+                    multisample: wgpu::MultisampleState::default(),
+                    fragment: Some(wgpu::FragmentState {
+                        module: &paths_shader,
+                        entry_point: Some("fs_path"),
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                        targets: color_targets,
+                    }),
                     multiview_mask: None,
                     cache: None,
                 },
@@ -1290,9 +1370,6 @@ impl WgpuRenderer {
         let pipelines =
             WgpuPipelines::new(context.as_ref(), &surface_configuration, path_sample_count);
 
-        // Configure the surface for presentation before the first draw call.
-        surface.configure(&context.device, &surface_configuration);
-
         // Create persistent framebuffer for browser-canvas-style blitting
         let persistent_framebuffer = context.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("persistent_framebuffer"),
@@ -1425,6 +1502,31 @@ impl WgpuRenderer {
                 });
         }
 
+        // Build flat vertex array for all paths (color + content mask baked per-vertex)
+        let mut flat_path_vertices: Vec<GpuPathVertex> = Vec::new();
+        for path in &scene.paths {
+            let color = path.color.solid;
+            let cm = &path.content_mask.bounds;
+            let cm_origin = [cm.origin.x.0, cm.origin.y.0];
+            let cm_size   = [cm.size.width.0, cm.size.height.0];
+            for vertex in &path.vertices {
+                flat_path_vertices.push(GpuPathVertex {
+                    xy_position:         [vertex.xy_position.x.0, vertex.xy_position.y.0],
+                    st_position:         [vertex.st_position.x,   vertex.st_position.y],
+                    hsla:                [color.h, color.s, color.l, color.a],
+                    content_mask_origin: cm_origin,
+                    content_mask_size:   cm_size,
+                });
+            }
+        }
+        if !flat_path_vertices.is_empty() {
+            self.context.queue.write_buffer(
+                &self.context.paths_vertices_buffer,
+                0,
+                bytemuck::cast_slice(&flat_path_vertices),
+            );
+        }
+
         // Acquire the next swapchain image.  On the first frame after window
         // creation (or after a resize races with the GPU) the surface can be
         // reported as `Outdated` or `Other`.  Rather than panicking we
@@ -1547,6 +1649,22 @@ impl WgpuRenderer {
                     }],
                 });
 
+        let paths_bind_group =
+            self.context
+                .device
+                .create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("paths_bind_group"),
+                    layout: &self.pipelines.paths_bind_group_layout,
+                    entries: &[wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                            buffer: &self.context.paths_vertices_buffer,
+                            offset: 0,
+                            size: None,
+                        }),
+                    }],
+                });
+
         {
             // Render to swapchain directly for now (TODO: render to framebuffer, then blit)
             let mut pass = command_encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -1573,6 +1691,7 @@ impl WgpuRenderer {
             let mut underlines_first_instance: u32 = 0;
             let mut mono_sprites_first_instance: u32 = 0;
             let mut poly_sprites_first_instance: u32 = 0;
+            let mut paths_vertex_offset: u32 = 0;
 
             for batch in scene.batches() {
                 match batch {
@@ -1815,7 +1934,20 @@ impl WgpuRenderer {
                         }
                     }
                     // TODO(mdeand): Implement paths rendering.
-                    PrimitiveBatch::Paths(_) => {}
+                    PrimitiveBatch::Paths(paths) => {
+                        let vertex_count: u32 =
+                            paths.iter().map(|p| p.vertices.len() as u32).sum();
+                        if vertex_count > 0 {
+                            pass.set_pipeline(&self.pipelines.paths_pipeline);
+                            pass.set_bind_group(0, &self.pipelines.globals_bind_group, &[]);
+                            pass.set_bind_group(1, &paths_bind_group, &[]);
+                            pass.draw(
+                                paths_vertex_offset..paths_vertex_offset + vertex_count,
+                                0..1,
+                            );
+                            paths_vertex_offset += vertex_count;
+                        }
+                    }
                 }
             }
         }
