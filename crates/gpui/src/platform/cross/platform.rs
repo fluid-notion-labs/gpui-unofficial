@@ -213,6 +213,14 @@ impl Platform for CrossPlatform {
                     bounds.size.height.0 as f64,
                 ));
 
+            // Set the window/application icon when one is provided.
+            if let Some(icon) = options.app_icon {
+                match winit::window::Icon::from_rgba(icon.rgba, icon.width, icon.height) {
+                    Ok(winit_icon) => attributes = attributes.with_window_icon(Some(winit_icon)),
+                    Err(err) => log::warn!("Failed to set window icon: {err}"),
+                }
+            }
+
             #[cfg(target_os = "macos")]
             if use_client_decorations {
                 let appears_transparent = options
