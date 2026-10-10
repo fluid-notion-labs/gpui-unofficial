@@ -1267,6 +1267,9 @@ impl WgpuRenderer {
         let pipelines =
             WgpuPipelines::new(context.as_ref(), &surface_configuration, path_sample_count);
 
+        // Configure the surface for presentation before the first draw call.
+        surface.configure(&context.device, &surface_configuration);
+
         Ok(Self {
             context: context.clone(),
             surface: ManuallyDrop::new(surface),
