@@ -121,3 +121,8 @@ features = ["HtmlCanvasElement"]
 [target.'cfg(target_family = "wasm")'.dependencies.wgpu]
 version = "29.0.4"
 features = ["webgl"]
+
+[dependencies.image]
+version = "0.25.1"
+default-features = false
+features = ["bmp", "dds", "exr", "ff", "gif", "hdr", "ico", "jpeg", "png", "pnm", "qoi", "rayon", "tga", "tiff", "webp"]
