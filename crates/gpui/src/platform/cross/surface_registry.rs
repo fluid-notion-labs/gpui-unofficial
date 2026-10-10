@@ -94,6 +94,9 @@ impl SurfaceRegistry {
             let current = tb.state.load(Ordering::Acquire);
             let (rendering, ready, display) = TripleBuffer::unpack_state(current);
 
+            log::debug!("[surface_id={:?}] swap_rendering_ready called - state before: rendering={}, ready={}, display={}",
+                id, rendering, ready, display);
+
             // Store submission index for the buffer we just rendered to
             tb.submission_indices.lock().unwrap()[rendering as usize] = Some(submission_idx);
 
@@ -147,14 +150,12 @@ impl SurfaceRegistry {
     /// should reuse the current display buffer).
     pub fn swap_ready_display(&self, device: &wgpu::Device, id: SurfaceId) -> bool {
         if let Some(tb) = self.surfaces.lock().unwrap().get(&id) {
-            let current = tb.state.load(Ordering::Acquire);
-            let (rendering, ready, display) = TripleBuffer::unpack_state(current);
-
-            // GPU SYNC: For now, just do a simple non-blocking poll of all work
-            // This ensures any completed GPU work is processed without blocking
-            let _ = device.poll(wgpu::PollType::Poll);
-
             // Atomic swap: ready ↔ display
+            // NOTE: We do NOT call device.poll() here because:
+            // 1. The render thread owns the device and is actively using it
+            // 2. Calling poll from multiple threads causes driver contention ("device lost")
+            // 3. WGPU internally handles synchronization when textures are accessed
+            // 4. The triple-buffer lock-free swaps are already safe
             let mut current = tb.state.load(Ordering::Acquire);
             loop {
                 let (rendering, ready, display) = TripleBuffer::unpack_state(current);
