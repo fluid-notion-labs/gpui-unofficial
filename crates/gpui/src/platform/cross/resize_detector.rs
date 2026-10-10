@@ -1,6 +1,6 @@
+use device_query::{DeviceQuery, DeviceState};
 use std::cell::Cell;
 use std::time::{Duration, Instant};
-use device_query::{DeviceQuery, DeviceState, MouseButton};
 
 /// Detects whether a window is actively being resized by watching the stream
 /// of [`winit::event::WindowEvent::Resized`] events.
@@ -50,7 +50,8 @@ impl ResizeDetector {
         // still dragging the resize handle; keep deferring and push the
         // fallback deadline out so it doesn't fire during the drag.
         let mouse = self.device_state.get_mouse();
-        let left_held = mouse.button_pressed.contains(&MouseButton::Left);
+        // button_pressed is 1-based; index 1 = left button.
+        let left_held = mouse.button_pressed.get(1).copied().unwrap_or(false);
 
         if left_held {
             self.deadline.set(Some(Instant::now() + IDLE_THRESHOLD));
