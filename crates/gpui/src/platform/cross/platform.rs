@@ -576,8 +576,7 @@ impl winit::application::ApplicationHandler<CrossEvent> for AppState {
                     return;
                 }
 
-                window.0.state.is_resizing.set(true);
-                window.0.state.last_resize_event.set(Some(Instant::now()));
+                window.0.state.resize_detector.on_resize_event();
                 window.window().request_redraw();
                 let scale_factor = window.scale_factor();
 
@@ -858,8 +857,6 @@ impl winit::application::ApplicationHandler<CrossEvent> for AppState {
                     winit::event::ElementState::Released => {
                         self.pressed_button = None;
                         if mouse_button == MouseButton::Left {
-                            window.0.state.is_resizing.set(false);
-                            window.0.state.last_resize_event.set(None);
                             window.window().request_redraw();
                         }
 
