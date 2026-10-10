@@ -213,18 +213,19 @@ impl SurfaceRegistry {
     /// texture resources are released.
     ///
     /// Also skips resize if compositor is actively using the buffers (redraw_pending).
-    pub fn resize(&self, device: &wgpu::Device, id: SurfaceId, width: u32, height: u32) {
+    /// Returns `true` if the resize completed, `false` if it was skipped due to active composition.
+    pub fn resize(&self, device: &wgpu::Device, id: SurfaceId, width: u32, height: u32) -> bool {
         let mut surfaces = self.surfaces.lock().unwrap();
         if let Some(tb) = surfaces.get_mut(&id) {
             if tb.width == width && tb.height == height {
-                return;
+                return true;
             }
 
             // CRITICAL: Don't resize while compositor is rendering this surface!
             // If redraw_pending is true, compositor is using the buffers.
             // Skip resize - the element will retry on next frame.
             if tb.redraw_pending.load(Ordering::Relaxed) {
-                return;
+                return false;
             }
 
             // NOTE: We do NOT call device.poll() here because:
@@ -236,7 +237,9 @@ impl SurfaceRegistry {
             // Now safe to recreate textures
             let new_tb = Self::create_triple_buffer(device, width, height, tb.format);
             *tb = new_tb;
+            return true;
         }
+        false
     }
 
     /// Get the current size of a surface.
