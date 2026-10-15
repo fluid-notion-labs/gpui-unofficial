@@ -667,8 +667,13 @@ impl WgpuContext {
         // GL_MAX_VERTEX_SHADER_STORAGE_BLOCKS = 0), and wgpu's limits cannot
         // express the per-stage split — the mismatch only surfaces as a
         // fatal shader-translation error at pipeline creation. Use the
-        // texture-based instance transport on any GL backend.
-        matches!(self.backend, WgpuBackend::Gl)
+        // texture-based instance transport on any GL backend, native or web
+        // (WgpuBackend::Gl is the web variant; native GL arrives as
+        // WgpuBackend::Native(wgpu::Backend::Gl)).
+        matches!(
+            self.backend,
+            WgpuBackend::Gl | WgpuBackend::Native(wgpu::Backend::Gl)
+        )
     }
 
     pub fn supports_dual_source_blending(&self) -> bool {
