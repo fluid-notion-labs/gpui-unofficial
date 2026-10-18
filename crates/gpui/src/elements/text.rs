@@ -826,6 +826,64 @@ impl TextLayout {
         }
     }
 
+    /// Paint only the background layers of this layout (highlights, selection
+    /// backgrounds painted by `WrappedLine::paint_background`). Pair with
+    /// [`TextLayout::paint_foreground`] afterwards so callers can paint their
+    /// own content between background and text glyphs.
+    pub fn paint_background(&self, window: &mut Window, cx: &mut App) -> anyhow::Result<()> {
+        let element_state = self.0.borrow();
+        let element_state = element_state
+            .as_ref()
+            .context("measurement has not been performed on text layout")?;
+        let bounds = element_state
+            .bounds
+            .context("prepaint has not been performed on text layout")?;
+        let line_height = element_state.line_height;
+        let text_style = window.text_style();
+        let mut line_origin = bounds.origin;
+        for line in &element_state.lines {
+            line.paint_background(
+                line_origin,
+                line_height,
+                text_style.text_align,
+                Some(bounds),
+                window,
+                cx,
+            )
+            .log_err();
+            line_origin.y += line.size(line_height).height;
+        }
+        Ok(())
+    }
+
+    /// Paint the text glyphs of this layout, after a matching
+    /// [`TextLayout::paint_background`] call.
+    pub fn paint_foreground(&self, window: &mut Window, cx: &mut App) -> anyhow::Result<()> {
+        let element_state = self.0.borrow();
+        let element_state = element_state
+            .as_ref()
+            .context("measurement has not been performed on text layout")?;
+        let bounds = element_state
+            .bounds
+            .context("prepaint has not been performed on text layout")?;
+        let line_height = element_state.line_height;
+        let text_style = window.text_style();
+        let mut line_origin = bounds.origin;
+        for line in &element_state.lines {
+            line.paint(
+                line_origin,
+                line_height,
+                text_style.text_align,
+                Some(bounds),
+                window,
+                cx,
+            )
+            .log_err();
+            line_origin.y += line.size(line_height).height;
+        }
+        Ok(())
+    }
+
     /// Get the byte index into the input of the pixel position.
     pub fn index_for_position(&self, mut position: Point<Pixels>) -> Result<usize, usize> {
         let element_state = self.0.borrow();
