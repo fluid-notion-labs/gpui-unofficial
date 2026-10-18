@@ -192,6 +192,60 @@ impl WgpuContext {
         Self::new_web_with_backend(canvas, preference).await
     }
 
+    /// Creates a `WgpuContext` from externally-initialized wgpu resources.
+    ///
+    /// Use this when you need to share a wgpu `Instance`, `Adapter`, `Device`,
+    /// and `Queue` with other wgpu-based libraries (e.g. a video decoder or
+    /// compute framework). The caller is responsible for creating the resources
+    /// and ensuring the adapter and device are compatible with the surfaces that
+    /// GPUI will create for its windows.
+    ///
+    /// A device-lost callback is installed on the provided device; if the caller
+    /// has already set one it will be replaced.
+    pub fn from_shared_resources(
+        instance: wgpu::Instance,
+        adapter: wgpu::Adapter,
+        device: Arc<wgpu::Device>,
+        queue: Arc<wgpu::Queue>,
+    ) -> Self {
+        let dual_source_blending = adapter
+            .features()
+            .contains(wgpu::Features::DUAL_SOURCE_BLENDING);
+
+        let device_lost = Arc::new(AtomicBool::new(false));
+        device.set_device_lost_callback({
+            let device_lost = Arc::clone(&device_lost);
+            move |reason, message| {
+                log::error!("wgpu device lost: reason={reason:?}, message={message}");
+                if reason != wgpu::DeviceLostReason::Destroyed {
+                    device_lost.store(true, Ordering::Relaxed);
+                }
+            }
+        });
+
+        let adapter_info = adapter.get_info();
+        let color_texture_format = if adapter
+            .get_texture_format_features(wgpu::TextureFormat::Bgra8Unorm)
+            .allowed_usages
+            .contains(wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST)
+        {
+            wgpu::TextureFormat::Bgra8Unorm
+        } else {
+            wgpu::TextureFormat::Rgba8Unorm
+        };
+
+        Self {
+            instance,
+            adapter,
+            device,
+            queue,
+            backend: WgpuBackend::Native(adapter_info.backend),
+            dual_source_blending,
+            color_texture_format,
+            device_lost,
+        }
+    }
+
     #[cfg(target_family = "wasm")]
     #[allow(clippy::arc_with_non_send_sync)]
     async fn new_web_with_backend(
@@ -276,7 +330,11 @@ impl WgpuContext {
         Ok(PreparedWebGraphics { context, surface })
     }
 
-    async fn create_device(
+    /// Request a wgpu device from `adapter` with the features and limits that
+    /// GPUI's renderer requires (e.g. dual-source blending when available).
+    ///
+    /// Returns `(device, queue, dual_source_blending)`.
+    pub async fn create_device(
         adapter: &wgpu::Adapter,
     ) -> anyhow::Result<(wgpu::Device, wgpu::Queue, bool, TextureFormat)> {
         let dual_source_blending = adapter

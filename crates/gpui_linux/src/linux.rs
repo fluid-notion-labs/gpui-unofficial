@@ -28,6 +28,8 @@ pub(crate) use wayland::*;
 #[cfg(feature = "x11")]
 pub(crate) use x11::*;
 
+#[cfg(any(feature = "wayland", feature = "x11"))]
+use std::cell::RefCell;
 use std::rc::Rc;
 
 /// Returns a renderer that draws into an offscreen texture, sharing one
@@ -68,15 +70,51 @@ pub fn current_platform(headless: bool) -> Rc<dyn gpui::Platform> {
         });
     }
 
+    #[cfg(any(feature = "wayland", feature = "x11"))]
+    let gpu_context: gpui_wgpu::GpuContext = Rc::new(RefCell::new(None));
+
     match gpui::guess_compositor() {
         #[cfg(feature = "wayland")]
         "Wayland" => Rc::new(LinuxPlatform {
-            inner: WaylandClient::new(),
+            inner: WaylandClient::new(gpu_context),
         }),
 
         #[cfg(feature = "x11")]
         "X11" => Rc::new(LinuxPlatform {
-            inner: X11Client::new()
+            inner: X11Client::new(gpu_context)
+                .context("Failed to initialize X11 client.")
+                .unwrap(),
+        }),
+
+        "Headless" => Rc::new(LinuxPlatform {
+            inner: HeadlessClient::new(),
+        }),
+        _ => unreachable!(),
+    }
+}
+
+/// Returns a platform that shares the given wgpu resources with its renderer.
+///
+/// Takes a [`gpui_wgpu::GpuContext`] handle: it may be empty (the first
+/// window's renderer then fills it, with an instance bound to the platform's
+/// own display connection — required, since surfaces must be created from
+/// the same connection their window belongs to) or prefilled by the caller.
+/// Either way the embedder holds the same handle and can create textures on
+/// the shared device.
+#[cfg(any(feature = "wayland", feature = "x11"))]
+pub fn current_platform_with_gpu(gpu_context: gpui_wgpu::GpuContext) -> Rc<dyn gpui::Platform> {
+    #[cfg(feature = "x11")]
+    use anyhow::Context as _;
+
+    match gpui::guess_compositor() {
+        #[cfg(feature = "wayland")]
+        "Wayland" => Rc::new(LinuxPlatform {
+            inner: WaylandClient::new(gpu_context),
+        }),
+
+        #[cfg(feature = "x11")]
+        "X11" => Rc::new(LinuxPlatform {
+            inner: X11Client::new(gpu_context)
                 .context("Failed to initialize X11 client.")
                 .unwrap(),
         }),

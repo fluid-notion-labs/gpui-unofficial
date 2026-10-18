@@ -60,6 +60,7 @@ profiler = ["dep:hdrhistogram"]
 proptest = ["dep:proptest"]
 screen-capture = ["scap"]
 stacker = ["dep:stacksafe"]
+wgpu = ["dep:wgpu"]
 test-support = [
     "leak-detection",
     "collections/test-support",
@@ -252,6 +253,10 @@ path = "examples/window_shadow.rs"
 [[test]]
 name = "action_macros"
 path = "tests/action_macros.rs"
+
+[dependencies.wgpu]
+version = "29.0.4"
+optional = true
 
 [dependencies.accesskit]
 version = "0.24.0"

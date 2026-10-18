@@ -61,6 +61,7 @@ package = "zed-font-kit"
 [dependencies.gpui]
 version = "1.20.0-pre"
 package = "gpui-unofficial"
+features = ["wgpu"]
 
 [dependencies.gpui_util]
 version = "1.20.0-pre"

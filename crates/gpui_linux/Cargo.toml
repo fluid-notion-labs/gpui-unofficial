@@ -280,6 +280,14 @@ level = "warn"
 priority = 0
 check-cfg = ['cfg(feature, values("nightly_coverage"))']
 
+[dev-dependencies.env_logger]
+version = "0.11"
+
+[[example]]
+name = "texture_surface"
+path = "examples/texture_surface.rs"
+required-features = ["wayland"]
+
 [dependencies.image]
 version = "0.25.1"
 default-features = false

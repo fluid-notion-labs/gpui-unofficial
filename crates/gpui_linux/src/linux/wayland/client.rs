@@ -767,7 +767,7 @@ fn wl_output_version(version: u32) -> u32 {
 }
 
 impl WaylandClient {
-    pub(crate) fn new() -> Self {
+    pub(crate) fn new(gpu_context: gpui_wgpu::GpuContext) -> Self {
         let startup_activation_token = take_startup_activation_token_from_environment();
         let conn = Connection::connect_to_env().unwrap();
 
@@ -839,7 +839,6 @@ impl WaylandClient {
             .unwrap();
 
         let compositor_gpu = detect_compositor_gpu();
-        let gpu_context = Rc::new(RefCell::new(None));
 
         let (frame_ping, frame_ping_source) =
             calloop::ping::make_ping().expect("Failed to create the frame ping");
