@@ -9,4 +9,4 @@ pub use wgpu;
 pub use wgpu_atlas::*;
 pub use wgpu_context::*;
 pub use wgpu_headless_renderer::*;
-pub use wgpu_renderer::{GpuContext, WgpuRenderer, WgpuSurfaceConfig};
+pub use wgpu_renderer::{WgpuRenderer, WgpuSurfaceConfig};

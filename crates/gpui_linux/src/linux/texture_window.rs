@@ -281,7 +281,7 @@ mod tests {
 
     #[test]
     fn resizes_synchronously_and_draws_into_texture() {
-        let gpu_context: GpuContext = Rc::new(RefCell::new(None));
+        let gpu_context = GpuContext::new(Default::default());
         let mut window =
             match TextureWindow::new(gpu_context, None, params(8., 8.), WindowAppearance::Dark) {
                 Ok(window) => window,

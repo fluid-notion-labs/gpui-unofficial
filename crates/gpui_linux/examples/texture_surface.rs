@@ -4,7 +4,7 @@
 //! One wgpu device is shared between the demo texture and gpui's renderer —
 //! the same setup an embedded bevy viewport would use. Ordering matters:
 //!
-//! 1. create an empty `GpuContext` handle and hand it to the platform;
+//! 1. create a `GpuContext` (config, no device yet) and hand it to the platform;
 //! 2. open a window — the renderer fills the handle, with an instance bound
 //!    to the *platform's* own display connection (surfaces must be created
 //!    from the same connection their window belongs to; a second Wayland
@@ -15,14 +15,11 @@
 //! a real integration it would be the output of another renderer (bevy,
 //! video decoder) living on the same device.
 
-use std::cell::RefCell;
-use std::rc::Rc;
-
 use gpui::{
     App, Application, Bounds, Context, DevicePixels, Render, Size, SurfaceSource, Window,
     WindowBounds, WindowOptions, div, prelude::*, px, rgb, size, surface,
 };
-use gpui_wgpu::{GpuContext, wgpu};
+use gpui_wgpu::{GpuContext, GpuContextConfig, wgpu};
 
 const TEXTURE_SIZE: u32 = 512;
 
@@ -90,8 +87,14 @@ fn create_demo_texture(device: &wgpu::Device, queue: &wgpu::Queue) -> wgpu::Text
 fn main() {
     let _ = env_logger::try_init();
 
-    // Empty handle: the first window's renderer fills it.
-    let gpu_context: GpuContext = Rc::new(RefCell::new(None));
+    // Empty context with our config: the first window's renderer creates the
+    // device from it. The knobs here mirror what an embedder (e.g. bevy)
+    // would ask for: everything the adapter offers, so a shared device can
+    // host both renderers' pipelines.
+    let config = GpuContextConfig::default()
+        .with_all_adapter_features(true)
+        .with_adapter_limits(true);
+    let gpu_context = GpuContext::new(config);
     let platform = gpui_linux_gpui_unofficial::current_platform_with_gpu(gpu_context.clone());
 
     Application::with_platform(platform).run(move |cx: &mut App| {
@@ -116,9 +119,9 @@ fn main() {
         // The renderer created the shared context during open_window; now
         // produce the demo texture on the same device and hand it over.
         let (device, queue) = {
-            let ctx = gpu_context.borrow();
-            let ctx = ctx.as_ref().expect("renderer must fill the shared context");
-            (ctx.device.clone(), ctx.queue.clone())
+            let device = gpu_context.device().expect("renderer must fill the shared context");
+            let queue = gpu_context.queue().expect("renderer must fill the shared context");
+            (device, queue)
         };
         let texture_view = create_demo_texture(&device, &queue);
 

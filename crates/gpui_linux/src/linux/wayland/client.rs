@@ -1130,7 +1130,7 @@ impl LinuxClient for WaylandClient {
         // Real windows create their surfaces through the shared context's
         // instance, so a context first initialized here must be bound to the
         // display.
-        let instance = if state.gpu_context.borrow().is_none() {
+        let instance = if !state.gpu_context.is_initialized() {
             let display = state
                 .globals
                 .compositor

@@ -2,6 +2,8 @@
 use anyhow::Context as _;
 #[cfg(not(target_family = "wasm"))]
 use gpui_util::ResultExt;
+use std::cell::RefCell;
+use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use wgpu::TextureFormat;
@@ -62,14 +64,230 @@ pub struct CompositorGpuHint {
     pub device_id: u32,
 }
 
+/// Callback that can filter or modify the set of wgpu features before device
+/// creation. Receives the adapter info and the candidate feature set, and
+/// returns the feature set that should actually be requested.
+pub type FeatureFilterFn =
+    Box<dyn Fn(&wgpu::AdapterInfo, wgpu::Features) -> wgpu::Features + 'static>;
+
+/// Configuration for GPU context initialization.
+///
+/// Use the builder methods to customise which wgpu features and limits are
+/// requested when the device is created.
+#[derive(Default)]
+pub struct GpuContextConfig {
+    additional_features: Option<wgpu::Features>,
+    all_adapter_features: bool,
+    experimental_features: bool,
+    adapter_limits: bool,
+    feature_filter: Option<FeatureFilterFn>,
+}
+
+impl GpuContextConfig {
+    /// Request additional wgpu features on top of what GPUI requires internally.
+    pub fn with_additional_features(mut self, features: wgpu::Features) -> Self {
+        *self.additional_features.get_or_insert(wgpu::Features::empty()) |= features;
+        self
+    }
+
+    /// When `true`, request *all* features reported by the adapter instead of
+    /// only the ones GPUI needs.
+    pub fn with_all_adapter_features(mut self, enabled: bool) -> Self {
+        self.all_adapter_features = enabled;
+        self
+    }
+
+    /// When `true`, enable experimental wgpu features on the device descriptor.
+    ///
+    /// # Safety
+    /// Experimental features may contain UB-triggering bugs. See
+    /// [`wgpu::ExperimentalFeatures::enabled`] for details.
+    pub fn with_experimental_features(mut self, enabled: bool) -> Self {
+        self.experimental_features = enabled;
+        self
+    }
+
+    /// When `true`, request limits that match the adapter's reported limits
+    /// rather than the conservative `downlevel_defaults`.
+    pub fn with_adapter_limits(mut self, enabled: bool) -> Self {
+        self.adapter_limits = enabled;
+        self
+    }
+
+    /// Register a callback that is invoked just before device creation to
+    /// adjust the requested feature set. This runs after all other feature
+    /// selection logic.
+    pub fn with_feature_filter(
+        mut self,
+        filter: impl Fn(&wgpu::AdapterInfo, wgpu::Features) -> wgpu::Features + 'static,
+    ) -> Self {
+        self.feature_filter = Some(Box::new(filter));
+        self
+    }
+}
+
+pub(crate) struct GpuContextInner {
+    pub(crate) context: Option<WgpuContext>,
+    pub(crate) config: GpuContextConfig,
+}
+
+/// Shared GPU context reference, used to coordinate device recovery across
+/// multiple windows and to carry configuration for device creation.
+///
+/// May be empty: the first window's renderer then fills it, with an instance
+/// bound to the platform's own display connection. Callers that need to build
+/// content on the same device (embedded engines, video decoders) hold the
+/// same handle and read it back once initialized.
+#[derive(Clone)]
+pub struct GpuContext {
+    pub(crate) inner: Rc<RefCell<GpuContextInner>>,
+}
+
+impl GpuContext {
+    /// Create a new `GpuContext` with the given configuration.
+    pub fn new(config: GpuContextConfig) -> Self {
+        Self {
+            inner: Rc::new(RefCell::new(GpuContextInner {
+                context: None,
+                config,
+            })),
+        }
+    }
+
+    /// Create a `GpuContext` that already holds an initialised `WgpuContext`.
+    ///
+    /// The config is set to defaults since the device was created externally.
+    pub fn from_wgpu_context(wgpu_context: WgpuContext) -> Self {
+        Self {
+            inner: Rc::new(RefCell::new(GpuContextInner {
+                context: Some(wgpu_context),
+                config: GpuContextConfig::default(),
+            })),
+        }
+    }
+
+    /// Returns `true` if the underlying `WgpuContext` has been initialised.
+    pub fn is_initialized(&self) -> bool {
+        self.inner.borrow().context.is_some()
+    }
+
+    /// Returns `true` if the underlying `WgpuContext` has been initialised and
+    /// reports that the GPU device was lost.
+    pub fn device_lost(&self) -> bool {
+        self.with_context(|ctx| ctx.device_lost()).unwrap_or(false)
+    }
+
+    /// Returns `true` if the `WgpuContext` has not been initialised, or was
+    /// initialised but the device has been lost.
+    pub fn needs_new_context(&self) -> bool {
+        self.inner
+            .borrow()
+            .context
+            .as_ref()
+            .is_none_or(|ctx| ctx.device_lost())
+    }
+
+    /// Returns `true` if dual-source blending is supported by the current GPU.
+    pub fn supports_dual_source_blending(&self) -> bool {
+        self.with_context(|ctx| ctx.supports_dual_source_blending())
+            .unwrap_or(false)
+    }
+
+    /// Clone the wgpu `Instance` from the underlying context, if initialised.
+    pub fn instance(&self) -> Option<wgpu::Instance> {
+        self.with_context(|ctx| ctx.instance.clone())
+    }
+
+    /// Clone the wgpu `Device` from the underlying context, if initialised.
+    pub fn device(&self) -> Option<Arc<wgpu::Device>> {
+        self.with_context(|ctx| ctx.device.clone())
+    }
+
+    /// Clone the wgpu `Queue` from the underlying context, if initialised.
+    pub fn queue(&self) -> Option<Arc<wgpu::Queue>> {
+        self.with_context(|ctx| ctx.queue.clone())
+    }
+
+    /// Run a callback with read access to the `WgpuContext`, if initialised.
+    pub fn with_context<R>(&self, f: impl FnOnce(&WgpuContext) -> R) -> Option<R> {
+        let inner = self.inner.borrow();
+        inner.context.as_ref().map(f)
+    }
+
+    /// Run a callback with read access to the underlying `WgpuContext`.
+    ///
+    /// Panics if the context has not been initialised.
+    pub fn with_context_ref<R>(&self, f: impl FnOnce(&WgpuContext) -> R) -> R {
+        let inner = self.inner.borrow();
+        f(inner.context.as_ref().expect("WgpuContext not initialised"))
+    }
+
+    /// Check that the current adapter is compatible with `surface`.
+    /// No-op when the context has not been initialised yet.
+    pub fn check_compatible_with_surface(&self, surface: &wgpu::Surface<'_>) -> anyhow::Result<()> {
+        self.with_context(|ctx| ctx.check_compatible_with_surface(surface))
+            .unwrap_or(Ok(()))
+    }
+
+    /// Initialise the `WgpuContext` if it has not been created yet.
+    ///
+    /// If the context already exists this is a no-op.
+    #[cfg(not(target_family = "wasm"))]
+    pub(crate) fn ensure_initialized(
+        &self,
+        instance: wgpu::Instance,
+        surface: &wgpu::Surface<'_>,
+        compositor_gpu: Option<CompositorGpuHint>,
+    ) -> anyhow::Result<()> {
+        let mut inner = self.inner.borrow_mut();
+        if inner.context.is_none() {
+            let wgpu_ctx = WgpuContext::new_with_options(
+                instance,
+                surface,
+                compositor_gpu,
+                false,
+                &inner.config,
+            )?;
+            inner.context = Some(wgpu_ctx);
+        }
+        Ok(())
+    }
+
+    /// Replace the current `WgpuContext` with a freshly-created one.
+    #[cfg(not(target_family = "wasm"))]
+    pub(crate) fn replace_context(
+        &self,
+        instance: wgpu::Instance,
+        surface: &wgpu::Surface<'_>,
+        compositor_gpu: Option<CompositorGpuHint>,
+    ) -> anyhow::Result<()> {
+        let mut inner = self.inner.borrow_mut();
+        let new_context = WgpuContext::new_with_options(
+            instance,
+            surface,
+            compositor_gpu,
+            false,
+            &inner.config,
+        )?;
+        inner.context = Some(new_context);
+        Ok(())
+    }
+
+    /// Drop the current `WgpuContext`, if any.
+    pub(crate) fn clear_context(&self) {
+        self.inner.borrow_mut().context.take();
+    }
+}
+
 impl WgpuContext {
     #[cfg(not(target_family = "wasm"))]
     pub fn new(
         instance: wgpu::Instance,
         surface: &wgpu::Surface<'_>,
         compositor_gpu: Option<CompositorGpuHint>,
+        config: &GpuContextConfig,
     ) -> anyhow::Result<Self> {
-        Self::new_with_options(instance, surface, compositor_gpu, false)
+        Self::new_with_options(instance, surface, compositor_gpu, false, config)
     }
 
     #[cfg(not(target_family = "wasm"))]
@@ -77,18 +295,22 @@ impl WgpuContext {
         instance: wgpu::Instance,
         surface: &wgpu::Surface<'_>,
         compositor_gpu: Option<CompositorGpuHint>,
+        config: &GpuContextConfig,
     ) -> anyhow::Result<Self> {
-        Self::new_with_options(instance, surface, compositor_gpu, true)
+        Self::new_with_options(instance, surface, compositor_gpu, true, config)
     }
 
     /// Creates a context that never presents to a surface, for rendering into
     /// offscreen textures only (headless tests, benchmarks, texture windows
     /// opened before any real window exists).
     #[cfg(not(target_family = "wasm"))]
-    pub fn new_headless(instance: wgpu::Instance) -> anyhow::Result<Self> {
+    pub fn new_headless(
+        instance: wgpu::Instance,
+        config: &GpuContextConfig,
+    ) -> anyhow::Result<Self> {
         let device_id_filter = Self::device_id_filter_from_env();
         let (adapter, device, queue, dual_source_blending, color_texture_format) = gpui::block_on(
-            Self::select_adapter_and_device_headless(&instance, device_id_filter),
+            Self::select_adapter_and_device_headless(&instance, device_id_filter, config),
         )?;
         Ok(Self::from_parts(
             instance,
@@ -121,6 +343,7 @@ impl WgpuContext {
         surface: &wgpu::Surface<'_>,
         compositor_gpu: Option<CompositorGpuHint>,
         reject_software: bool,
+        config: &GpuContextConfig,
     ) -> anyhow::Result<Self> {
         let device_id_filter = Self::device_id_filter_from_env();
 
@@ -133,6 +356,7 @@ impl WgpuContext {
                 surface,
                 compositor_gpu.as_ref(),
                 reject_software,
+                config,
             ))?;
 
         Ok(Self::from_parts(
@@ -300,7 +524,7 @@ impl WgpuContext {
 
         let device_lost = Arc::new(AtomicBool::new(false));
         let (device, queue, dual_source_blending, color_texture_format) =
-            Self::create_device(&adapter).await?;
+            Self::create_device(&adapter, &GpuContextConfig::default()).await?;
         device.set_device_lost_callback({
             let device_lost = Arc::clone(&device_lost);
             move |reason, message| {
@@ -336,6 +560,7 @@ impl WgpuContext {
     /// Returns `(device, queue, dual_source_blending)`.
     pub async fn create_device(
         adapter: &wgpu::Adapter,
+        config: &GpuContextConfig,
     ) -> anyhow::Result<(wgpu::Device, wgpu::Queue, bool, TextureFormat)> {
         let dual_source_blending = adapter
             .features()
@@ -351,6 +576,16 @@ impl WgpuContext {
             );
         }
 
+        if config.all_adapter_features {
+            required_features |= adapter.features();
+        }
+
+        required_features |= config.additional_features.unwrap_or_default();
+
+        if let Some(ref filter) = config.feature_filter {
+            required_features = filter(&adapter.get_info(), required_features);
+        }
+
         let color_atlas_texture_format = Self::select_color_texture_format(adapter)?;
         #[cfg(target_family = "wasm")]
         let required_limits = if adapter.get_info().backend == wgpu::Backend::Gl {
@@ -363,9 +598,20 @@ impl WgpuContext {
                 .using_alignment(adapter.limits())
         };
         #[cfg(not(target_family = "wasm"))]
-        let required_limits = wgpu::Limits::downlevel_defaults()
-            .using_resolution(adapter.limits())
-            .using_alignment(adapter.limits());
+        let required_limits = if config.adapter_limits {
+            adapter.limits()
+        } else {
+            wgpu::Limits::downlevel_defaults()
+                .using_resolution(adapter.limits())
+                .using_alignment(adapter.limits())
+        };
+
+        // Safety: the caller opted in via `GpuContextConfig::with_experimental_features(true)`.
+        let experimental_features = if config.experimental_features {
+            unsafe { wgpu::ExperimentalFeatures::enabled() }
+        } else {
+            wgpu::ExperimentalFeatures::disabled()
+        };
 
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
@@ -374,7 +620,7 @@ impl WgpuContext {
                 required_limits,
                 memory_hints: wgpu::MemoryHints::MemoryUsage,
                 trace: wgpu::Trace::Off,
-                experimental_features: wgpu::ExperimentalFeatures::disabled(),
+                experimental_features,
             })
             .await
             .map_err(|e| anyhow::anyhow!("Failed to create wgpu device: {e}"))?;
@@ -438,6 +684,7 @@ impl WgpuContext {
         surface: &wgpu::Surface<'_>,
         compositor_gpu: Option<&CompositorGpuHint>,
         reject_software: bool,
+        config: &GpuContextConfig,
     ) -> anyhow::Result<(
         wgpu::Adapter,
         wgpu::Device,
@@ -464,7 +711,7 @@ impl WgpuContext {
 
             log::info!("Testing adapter: {} ({:?})...", info.name, info.backend);
 
-            match Self::try_adapter_with_surface(&adapter, surface).await {
+            match Self::try_adapter_with_surface(&adapter, surface, config).await {
                 Ok((device, queue, dual_source_blending, color_atlas_texture_format)) => {
                     log::info!(
                         "Selected GPU (passed configuration test): {} ({:?})",
@@ -499,6 +746,7 @@ impl WgpuContext {
     async fn select_adapter_and_device_headless(
         instance: &wgpu::Instance,
         device_id_filter: Option<u32>,
+        config: &GpuContextConfig,
     ) -> anyhow::Result<(
         wgpu::Adapter,
         wgpu::Device,
@@ -511,7 +759,7 @@ impl WgpuContext {
 
         for adapter in adapters {
             let info = adapter.get_info();
-            match Self::create_device(&adapter).await {
+            match Self::create_device(&adapter, config).await {
                 Ok((device, queue, dual_source_blending, color_atlas_texture_format)) => {
                     log::info!(
                         "Selected GPU (headless): {} ({:?})",
@@ -634,6 +882,7 @@ impl WgpuContext {
     async fn try_adapter_with_surface(
         adapter: &wgpu::Adapter,
         surface: &wgpu::Surface<'_>,
+        config: &GpuContextConfig,
     ) -> anyhow::Result<(wgpu::Device, wgpu::Queue, bool, TextureFormat)> {
         let caps = surface.get_capabilities(adapter);
         if caps.formats.is_empty() {
@@ -644,7 +893,7 @@ impl WgpuContext {
         }
 
         let (device, queue, dual_source_blending, color_atlas_texture_format) =
-            Self::create_device(adapter).await?;
+            Self::create_device(adapter, config).await?;
         let error_scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
 
         let test_config = wgpu::SurfaceConfiguration {

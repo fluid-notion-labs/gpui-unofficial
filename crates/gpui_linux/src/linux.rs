@@ -29,7 +29,6 @@ pub(crate) use wayland::*;
 pub(crate) use x11::*;
 
 #[cfg(any(feature = "wayland", feature = "x11"))]
-use std::cell::RefCell;
 use std::rc::Rc;
 
 /// Returns a renderer that draws into an offscreen texture, sharing one
@@ -44,10 +43,10 @@ pub fn current_headless_renderer() -> Option<Box<dyn gpui::PlatformHeadlessRende
     // own thread-locals may already be gone, and dropping a Queue then aborts.
     thread_local! {
         static HEADLESS_GPU_CONTEXT: std::mem::ManuallyDrop<gpui_wgpu::GpuContext> =
-            std::mem::ManuallyDrop::new(Rc::new(std::cell::RefCell::new(None)));
+            std::mem::ManuallyDrop::new(gpui_wgpu::GpuContext::new(Default::default()));
     }
 
-    let gpu_context = HEADLESS_GPU_CONTEXT.with(|context| Rc::clone(context));
+    let gpu_context = HEADLESS_GPU_CONTEXT.with(|context| gpui_wgpu::GpuContext::clone(context));
     let renderer = gpui_wgpu::WgpuHeadlessRenderer::new(gpu_context)
         .context("Failed to create headless wgpu renderer")
         .log_err()?;
@@ -71,7 +70,7 @@ pub fn current_platform(headless: bool) -> Rc<dyn gpui::Platform> {
     }
 
     #[cfg(any(feature = "wayland", feature = "x11"))]
-    let gpu_context: gpui_wgpu::GpuContext = Rc::new(RefCell::new(None));
+    let gpu_context = gpui_wgpu::GpuContext::new(Default::default());
 
     match gpui::guess_compositor() {
         #[cfg(feature = "wayland")]
