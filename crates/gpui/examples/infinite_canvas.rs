@@ -540,6 +540,9 @@ impl Render for InfiniteCanvas {
 }
 
 fn main() {
+    if std::env::var("RUST_LOG").is_ok() {
+        env_logger::init();
+    }
     application().run(|cx: &mut App| {
         if !example_support::load_fonts(cx) {
             return;
