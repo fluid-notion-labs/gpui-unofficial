@@ -80,6 +80,7 @@ pub struct GpuContextConfig {
     all_adapter_features: bool,
     experimental_features: bool,
     adapter_limits: bool,
+    constrained_limits: Option<wgpu::Limits>,
     feature_filter: Option<FeatureFilterFn>,
 }
 
@@ -111,6 +112,24 @@ impl GpuContextConfig {
     /// rather than the conservative `downlevel_defaults`.
     pub fn with_adapter_limits(mut self, enabled: bool) -> Self {
         self.adapter_limits = enabled;
+        self
+    }
+
+    /// Constrain the device to exactly these limits (used as the device's
+    /// `required_limits` wholesale).
+    ///
+    /// Use this to hide capabilities the driver reports but cannot actually
+    /// deliver. Example (AMD HD 5770 / Mesa r600): wgpu reports the
+    /// stage-independent compute/fragment storage-buffer count, but the
+    /// VERTEX stage allows zero — pipelines that declare vertex storage
+    /// fail at creation with "Too many vertex shader storage blocks".
+    /// Constraining `max_storage_buffers_per_shader_stage: 0` makes
+    /// consumers (e.g. bevy's `AVAILABLE_STORAGE_BUFFER_BINDINGS` shader
+    /// def) select uniform-buffer paths instead.
+    ///
+    /// Takes precedence over [`Self::with_adapter_limits`].
+    pub fn with_constrained_limits(mut self, limits: wgpu::Limits) -> Self {
+        self.constrained_limits = Some(limits);
         self
     }
 
@@ -598,7 +617,9 @@ impl WgpuContext {
                 .using_alignment(adapter.limits())
         };
         #[cfg(not(target_family = "wasm"))]
-        let required_limits = if config.adapter_limits {
+        let required_limits = if let Some(constrained) = &config.constrained_limits {
+            constrained.clone()
+        } else if config.adapter_limits {
             adapter.limits()
         } else {
             wgpu::Limits::downlevel_defaults()
