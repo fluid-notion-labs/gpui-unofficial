@@ -919,6 +919,7 @@ impl WgpuContext {
 
         let test_config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            color_space: wgpu::SurfaceColorSpace::Auto,
             format: caps.formats[0],
             width: 64,
             height: 64,

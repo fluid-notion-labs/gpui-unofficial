@@ -255,7 +255,7 @@ name = "action_macros"
 path = "tests/action_macros.rs"
 
 [dependencies.wgpu]
-version = "29.0.4"
+version = "30.0.1"
 optional = true
 
 [dependencies.accesskit]

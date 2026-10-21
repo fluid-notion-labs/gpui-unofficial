@@ -205,7 +205,9 @@ impl WgpuHeadlessRenderer {
             wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Bgra8UnormSrgb => true,
             _ => false,
         };
-        let mapped = slice.get_mapped_range();
+        let mapped = slice
+            .get_mapped_range()
+            .map_err(|e| anyhow::anyhow!("mapped range error: {e}"))?;
         let mut pixels = Vec::with_capacity((unpadded_bytes_per_row * height) as usize);
         for row in mapped.chunks_exact(padded_bytes_per_row as usize) {
             let row = &row[..unpadded_bytes_per_row as usize];
