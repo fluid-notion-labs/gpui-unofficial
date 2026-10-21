@@ -119,10 +119,24 @@ pub fn current_platform_with_gpu(gpu_context: gpui_wgpu::GpuContext) -> Rc<dyn g
         }),
 
         "Headless" => Rc::new(LinuxPlatform {
-            inner: HeadlessClient::new(),
+            inner: HeadlessClient::with_gpu(gpu_context),
         }),
         _ => unreachable!(
             r#"At least one of the "wayland" or "x11" features must be enabled on gpui_linux or gpui_platform."#
         ),
     }
+}
+
+/// A display-free platform: the headless client with the caller's GPU
+/// context, so `open_texture_window` renders offscreen without ever touching
+/// a compositor. For apps that must run with no window server at all (SSH,
+/// CI, containers): no Wayland/X11 connection is opened and no window can
+/// pop up. Real windows are not available on this platform.
+#[cfg(any(feature = "wayland", feature = "x11"))]
+pub fn current_platform_headless_with_gpu(
+    gpu_context: gpui_wgpu::GpuContext,
+) -> Rc<dyn gpui::Platform> {
+    Rc::new(LinuxPlatform {
+        inner: HeadlessClient::with_gpu(gpu_context),
+    })
 }

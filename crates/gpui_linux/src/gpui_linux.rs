@@ -3,4 +3,4 @@ mod linux;
 
 pub use linux::{current_headless_renderer, current_platform};
 #[cfg(any(feature = "wayland", feature = "x11"))]
-pub use linux::current_platform_with_gpu;
+pub use linux::{current_platform_headless_with_gpu, current_platform_with_gpu};
