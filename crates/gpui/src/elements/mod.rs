@@ -7,6 +7,8 @@ mod div;
 mod image_cache;
 mod img;
 mod list;
+#[cfg(test)]
+mod list_repro_test;
 mod surface;
 mod svg;
 mod text;
