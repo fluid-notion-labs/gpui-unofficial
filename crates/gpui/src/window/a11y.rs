@@ -133,6 +133,10 @@ pub(crate) struct A11y {
     /// Updated by AccessKit using callbacks provided to the adapter. Can change
     /// halfway through a frame.
     active_flag: Arc<AtomicBool>,
+    /// Whether a11y tree building was forced on for this window (headless
+    /// testing: texture windows have no assistive technology to activate
+    /// them, but tests and debug tooling still want the tree).
+    force_active: bool,
     /// Whether a11y features are active for *this specific frame*.
     ///
     /// At the start of each frame, we load [`Self::active_flag`] (using
@@ -171,6 +175,7 @@ impl A11y {
     ) -> Self {
         Self {
             force_disabled,
+            force_active: false,
             active_flag,
             active_this_frame: false,
             nodes: A11yNodeBuilder::new(),
@@ -210,7 +215,18 @@ impl A11y {
     /// See the docs for [`Self::active_flag`] and [`Self::active_this_frame`]
     /// for more commentary.
     pub(crate) fn sync_active_flag(&mut self) {
-        self.active_this_frame = !self.force_disabled && self.active_flag.load(Ordering::SeqCst);
+        self.active_this_frame = self.force_active
+            || (!self.force_disabled && self.active_flag.load(Ordering::SeqCst));
+    }
+
+    /// Force accessibility tree building on for this window, even when no
+    /// assistive technology is connected (or the window is a texture
+    /// window, where activation is impossible by construction). For tests
+    /// and debug tooling: the tree is then dumped via
+    /// [`crate::Window::debug_a11y_tree_json`].
+    pub(crate) fn force_active(&mut self) {
+        self.force_active = true;
+        self.active_flag.store(true, Ordering::SeqCst);
     }
 
     pub(crate) fn is_active(&self) -> bool {

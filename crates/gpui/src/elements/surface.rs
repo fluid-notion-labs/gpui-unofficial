@@ -16,8 +16,11 @@ pub enum SurfaceSource {
     /// A WGPU texture view that is resident on the GPU device.
     #[cfg(feature = "wgpu")]
     Texture {
+        /// The resident texture to present.
         texture_view: wgpu::TextureView,
+        /// The texture's format (must match the swapchain for blitting).
         texture_format: wgpu::TextureFormat,
+        /// The texture's size in device pixels.
         texture_size: Size<DevicePixels>,
     },
 }

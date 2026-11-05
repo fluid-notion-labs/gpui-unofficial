@@ -6985,6 +6985,15 @@ impl Window {
         self.a11y.debug_tree_json()
     }
 
+    /// Force accessibility tree building on for this window — for headless
+    /// testing and debug tooling, where no assistive technology exists to
+    /// activate it (texture windows in particular force-disable a11y). Takes
+    /// effect from the next drawn frame; dump the tree with
+    /// [`Self::debug_a11y_tree_json`].
+    pub fn force_a11y_active(&mut self) {
+        self.a11y.force_active();
+    }
+
     /// Register a listener for an accessibility action on a specific node.
     /// The listener will be called when a screen reader requests the given
     /// action on the node identified by `node_id`.
