@@ -3430,6 +3430,13 @@ impl Window {
         self.capslock
     }
 
+    /// Whether the window has pending invalidations and would redraw on the
+    /// next `draw`. Manual pump loops (headless texture windows) gate on this
+    /// so an idle window costs no draw work.
+    pub fn needs_draw(&self) -> bool {
+        self.invalidator.is_dirty()
+    }
+
     /// Produces a new frame and assigns it to `rendered_frame`. To actually show
     /// the contents of the new [`Scene`], use [`Self::present`].
     #[profiling::function]
