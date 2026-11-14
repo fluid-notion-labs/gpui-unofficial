@@ -980,6 +980,19 @@ impl App {
             futures.push(observer(self));
         }
 
+        // Release per-window platform state that holds entity handles
+        // before the entities go: the focused input's PlatformInputHandler
+        // keeps a strong Entity clone (ElementInputHandler) parked in the
+        // platform window between frames, and the platform client outlives
+        // the App — a passive drop would leave the handle outstanding for
+        // the exit-time leak check (observed: one leaked
+        // InputBaseState<TextareaMode> per graceful quit).
+        for (_, slot) in self.windows.iter_mut() {
+            if let Some(window) = slot {
+                let _ = window.platform_window.take_input_handler();
+            }
+        }
+
         self.windows.clear();
         self.window_handles.clear();
         self.flush_effects();
